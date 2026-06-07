@@ -1,0 +1,17 @@
+{{- if and (eq .Values.persistence.type "local") (not .Values.persistence.local.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ template "forge.fullname" . }}-storage-pvc
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.local.accessMode | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.local.size | quote }}
+  {{- if .Values.persistence.local.storageClass }}
+  storageClassName: {{ .Values.persistence.local.storageClass | quote }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,19 @@
+{{- if and .Values.search.enabled (or .Values.api.enabled .Values.worker.enabled) }}
+{{- $s := include "forge.search" . | fromJson }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "forge.fullname" . }}-shared-search-config
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+data:
+  SEARCH_ENABLED: "true"
+  SEARCH_TYPE: {{ $s.type | quote }}
+  SEARCH_HOST: {{ $s.host | quote }}
+  SEARCH_PORT: {{ $s.port | toString | quote }}
+  SEARCH_USE_SSL: {{ $s.useSsl | toString | quote }}
+  SEARCH_INDEX_PREFIX: {{ .Values.search.indexPrefix | quote }}
+  {{- if $s.username }}
+  SEARCH_USERNAME: {{ $s.username | quote }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,16 @@
+{{- if .Values.scheduler.enabled }}
+{{- $db := include "forge.datasource" . | fromJson }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "forge.fullname" . }}-scheduler-config
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+data:
+  APP_ROLE: "scheduler"
+  APP_ENV: "production"
+  APP_DEBUG: "false"
+  LOG_LEVEL: {{ .Values.global.log.level | quote }}
+  TZ: {{ .Values.global.timezone | quote }}
+  DATABASE_USERNAME: {{ $db.username | quote }}
+{{- end }}

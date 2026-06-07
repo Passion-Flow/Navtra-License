@@ -1,0 +1,4 @@
+{
+  "master": { "key_id": "", "alg": "ed25519", "public_key": "" },
+  "edge_lease": { "key_id": "", "alg": "ed25519", "public_key": "" }
+}

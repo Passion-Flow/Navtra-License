@@ -1,0 +1,43 @@
+# ───── secrets / runtime (never commit) ─────
+.env
+*.env
+!.env.example
+*.pem
+*.key
+*.crt
+forge-deploy/docker-compose/volumes/
+
+# ───── local dev tooling & internal docs (not part of the published product) ─────
+services/
+Project-design/
+.agent.md
+.agent/
+dev-compose.yaml
+
+# ───── packaged build artifacts (regenerate with `helm package` / `tar`) ─────
+*.tgz
+
+# ───── Python ─────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.coverage
+htmlcov/
+
+# ───── Node / frontend ─────
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# ───── editors / OS ─────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.log

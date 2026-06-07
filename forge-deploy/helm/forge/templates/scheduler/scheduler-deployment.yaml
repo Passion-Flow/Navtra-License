@@ -1,0 +1,89 @@
+{{- if .Values.scheduler.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+    app: {{ template "forge.fullname" . }}-scheduler
+  name: {{ template "forge.fullname" . }}-scheduler
+spec:
+  replicas: {{ .Values.scheduler.replicas }}
+  strategy:
+    type: Recreate   # singleton celery beat — never run two
+  selector:
+    matchLabels:
+{{- include "forge.selectorLabels" . | nindent 6 }}
+      app: {{ template "forge.fullname" . }}-scheduler
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/scheduler/scheduler-config.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/scheduler/scheduler-secret.yaml") . | sha256sum }}
+        checksum/shared-db-config: {{ include (print $.Template.BasePath "/shared/db/db-config.yaml") . | sha256sum }}
+      labels:
+{{- include "forge.selectorLabels" . | nindent 8 }}
+        app: {{ template "forge.fullname" . }}-scheduler
+{{- include "forge.podExtraLabels" . | nindent 8 }}
+    spec:
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.scheduler.serviceAccountName }}
+      serviceAccountName: {{ .Values.scheduler.serviceAccountName | quote }}
+      {{- end }}
+      {{- if include "forge.customCA.enabled" . }}
+      initContainers:
+{{ include "forge.customCA.initContainer" . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ template "forge.fullname" . }}-scheduler
+          image: {{ include "forge.componentImage" (dict "comp" .Values.scheduler "ctx" .) | quote }}
+          imagePullPolicy: {{ .Values.scheduler.image.pullPolicy }}
+          command: ["celery", "-A", "app.worker", "beat", "--loglevel=info"]
+          env:
+            {{- with .Values.scheduler.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- if include "forge.customCA.enabled" . }}
+            {{- include "forge.customCA.env" . | nindent 12 }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ template "forge.fullname" . }}-scheduler-config
+            - secretRef:
+                name: {{ template "forge.fullname" . }}-scheduler-secret
+            - configMapRef:
+                name: {{ template "forge.fullname" . }}-shared-db-config
+            - configMapRef:
+                name: {{ template "forge.fullname" . }}-shared-redis-config
+            - secretRef:
+                name: {{ template "forge.fullname" . }}-shared-redis-secret
+          {{- with .Values.scheduler.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.scheduler.resources | nindent 12 }}
+          {{- if include "forge.customCA.enabled" . }}
+          volumeMounts:
+{{ include "forge.customCA.volumeMount" . | nindent 12 }}
+          {{- end }}
+      {{- with (.Values.scheduler.nodeSelector | default .Values.global.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.scheduler.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if include "forge.customCA.enabled" . }}
+      volumes:
+{{ include "forge.customCA.volume" . | nindent 8 }}
+      {{- end }}
+{{- end }}

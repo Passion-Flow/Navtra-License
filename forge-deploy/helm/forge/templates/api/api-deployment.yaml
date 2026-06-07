@@ -1,0 +1,129 @@
+{{- if .Values.api.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+    app: {{ template "forge.fullname" . }}-api
+  name: {{ template "forge.fullname" . }}-api
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+{{- include "forge.selectorLabels" . | nindent 6 }}
+      app: {{ template "forge.fullname" . }}-api
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/api/api-config.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/api/api-secret.yaml") . | sha256sum }}
+        checksum/shared-db-config: {{ include (print $.Template.BasePath "/shared/db/db-config.yaml") . | sha256sum }}
+        checksum/shared-redis-config: {{ include (print $.Template.BasePath "/shared/redis/redis-config.yaml") . | sha256sum }}
+        checksum/shared-redis-secret: {{ include (print $.Template.BasePath "/shared/redis/redis-secret.yaml") . | sha256sum }}
+        checksum/shared-storage-config: {{ include (print $.Template.BasePath "/shared/storage/storage-config.yaml") . | sha256sum }}
+        checksum/shared-storage-secret: {{ include (print $.Template.BasePath "/shared/storage/storage-secret.yaml") . | sha256sum }}
+      labels:
+{{- include "forge.selectorLabels" . | nindent 8 }}
+        app: {{ template "forge.fullname" . }}-api
+{{- include "forge.podExtraLabels" . | nindent 8 }}
+    spec:
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.api.serviceAccountName }}
+      serviceAccountName: {{ .Values.api.serviceAccountName | quote }}
+      {{- end }}
+      {{- if include "forge.customCA.enabled" . }}
+      initContainers:
+{{ include "forge.customCA.initContainer" . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ template "forge.fullname" . }}-api
+          image: {{ include "forge.componentImage" (dict "comp" .Values.api "ctx" .) | quote }}
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          env:
+            {{- with .Values.api.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- if include "forge.customCA.enabled" . }}
+            {{- include "forge.customCA.env" . | nindent 12 }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ template "forge.fullname" . }}-api-config
+            - secretRef:
+                name: {{ template "forge.fullname" . }}-api-secret
+            - configMapRef:
+                name: {{ template "forge.fullname" . }}-shared-db-config
+            - configMapRef:
+                name: {{ template "forge.fullname" . }}-shared-redis-config
+            - secretRef:
+                name: {{ template "forge.fullname" . }}-shared-redis-secret
+            {{- if .Values.persistence.enabled }}
+            - configMapRef:
+                name: {{ template "forge.fullname" . }}-shared-storage-config
+            - secretRef:
+                name: {{ template "forge.fullname" . }}-shared-storage-secret
+            {{- end }}
+            {{- if .Values.mail.enabled }}
+            - configMapRef:
+                name: {{ template "forge.fullname" . }}-shared-mail-config
+            - secretRef:
+                name: {{ template "forge.fullname" . }}-shared-mail-secret
+            {{- end }}
+            {{- if .Values.search.enabled }}
+            - configMapRef:
+                name: {{ template "forge.fullname" . }}-shared-search-config
+            - secretRef:
+                name: {{ template "forge.fullname" . }}-shared-search-secret
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          {{- with .Values.api.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.api.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          {{- if or (eq .Values.persistence.type "local") (include "forge.customCA.enabled" .) }}
+          volumeMounts:
+            {{- if eq .Values.persistence.type "local" }}
+            - name: app-data
+              mountPath: /forge-shared/storage
+            {{- end }}
+            {{- if include "forge.customCA.enabled" . }}
+{{ include "forge.customCA.volumeMount" . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+      {{- with (.Values.api.nodeSelector | default .Values.global.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if or (eq .Values.persistence.type "local") (include "forge.customCA.enabled" .) }}
+      volumes:
+        {{- if eq .Values.persistence.type "local" }}
+        - name: app-data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.local.existingClaim | default (printf "%s-storage-pvc" (include "forge.fullname" .)) }}
+        {{- end }}
+        {{- if include "forge.customCA.enabled" . }}
+{{ include "forge.customCA.volume" . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+{{- end }}

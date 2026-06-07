@@ -1,0 +1,283 @@
+# ==================================================================
+# Forge — production docker-compose (private / on-prem; style mirrors Dify's compose).
+#   cp .env.example .env   &&   edit .env (fill every #REPLACE_ME# — the KEKs + passwords)
+#   docker compose up -d        # brings up the FULL stack incl. bundled PostgreSQL + Redis (default)
+# Everything is self-contained: you only fill secrets in .env. To use an EXTERNAL DB/cache instead,
+# point DATABASE_* / CACHE_* in .env at it and remove the bundled postgres/redis services below.
+# Optional alternative datastores via profiles: mysql | dameng | valkey | seaweedfs | search.
+# ==================================================================
+
+# Shared backend env, consumed by api/edge/worker/scheduler via `<<: *forge-backend-env`.
+# Every value is overridable from .env as ${VAR:-default}.
+x-shared-env: &forge-backend-env
+  APP_ENV: ${APP_ENV:-production}
+  APP_DEBUG: ${APP_DEBUG:-false}
+  # Session cookie Secure flag: keep true behind TLS; set false ONLY for a plain-HTTP trial,
+  # otherwise the browser drops the cookie over HTTP and login silently never sticks.
+  SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+  APP_BASE_URL: ${APP_BASE_URL:-http://localhost}
+  TZ: ${TZ:-UTC}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_OUTPUT_FORMAT: ${LOG_OUTPUT_FORMAT:-json}
+  MIGRATION_ENABLED: ${MIGRATION_ENABLED:-true}
+  # ---- database (non-credential; per-tier user/password set on each service) ----
+  DATABASE_TYPE: ${DATABASE_TYPE:-postgres}
+  DATABASE_HOST: ${DATABASE_HOST:-postgres}
+  DATABASE_PORT: ${DATABASE_PORT:-5432}
+  DATABASE_NAME: ${DATABASE_NAME:-forge_main}
+  DATABASE_SSL_MODE: ${DATABASE_SSL_MODE:-prefer}
+  # ---- cache ----
+  CACHE_TYPE: ${CACHE_TYPE:-redis}
+  CACHE_HOST: ${CACHE_HOST:-redis}
+  CACHE_PORT: ${CACHE_PORT:-6379}
+  CACHE_PASSWORD: ${CACHE_PASSWORD:-}
+  # ---- object storage ----
+  OBJECT_STORAGE_TYPE: ${OBJECT_STORAGE_TYPE:-local}
+  OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-forge}
+  OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:-}
+  OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:-}
+  OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:-}
+  OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:-}
+  OBJECT_STORAGE_SECURE: ${OBJECT_STORAGE_SECURE:-true}
+  # ---- email ----
+  EMAIL_TYPE: ${EMAIL_TYPE:-smtp}
+  EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-forge@navtra.ai}
+  EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Forge}
+  EMAIL_HOST: ${EMAIL_HOST:-}
+  EMAIL_PORT: ${EMAIL_PORT:-465}
+  EMAIL_USERNAME: ${EMAIL_USERNAME:-}
+  EMAIL_PASSWORD: ${EMAIL_PASSWORD:-}
+  EMAIL_USE_TLS: ${EMAIL_USE_TLS:-true}
+  EMAIL_API_KEY: ${EMAIL_API_KEY:-}
+  # ---- search (optional) ----
+  SEARCH_ENABLED: ${SEARCH_ENABLED:-false}
+  SEARCH_TYPE: ${SEARCH_TYPE:-opensearch}
+  SEARCH_HOST: ${SEARCH_HOST:-}
+  SEARCH_PORT: ${SEARCH_PORT:-9200}
+  SEARCH_USERNAME: ${SEARCH_USERNAME:-}
+  SEARCH_PASSWORD: ${SEARCH_PASSWORD:-}
+  SEARCH_USE_SSL: ${SEARCH_USE_SSL:-true}
+  SEARCH_INDEX_PREFIX: ${SEARCH_INDEX_PREFIX:-forge}
+  # ---- private CA (optional) ----
+  # Set FORGE_CA_FILE in .env to a CA bundle path to trust a self-signed / private CA. When unset
+  # these resolve to empty (system CAs only); the CA file mounted below is then a harmless /dev/null.
+  SSL_CERT_FILE: ${FORGE_CA_FILE:+/etc/forge/ca-bundle.crt}
+  REQUESTS_CA_BUNDLE: ${FORGE_CA_FILE:+/etc/forge/ca-bundle.crt}
+  AWS_CA_BUNDLE: ${FORGE_CA_FILE:+/etc/forge/ca-bundle.crt}
+  CURL_CA_BUNDLE: ${FORGE_CA_FILE:+/etc/forge/ca-bundle.crt}
+
+x-api-image: &api-image ${REGISTRY:-crpi-ew8juv9423tvogc4.cn-hongkong.personal.cr.aliyuncs.com/navtra-mirror}/forge-api:${FORGE_TAG:-v1.0.0}
+
+services:
+  # ---- signing core (internal only — never publish its port) ----------------------------------
+  forge-api:
+    image: *api-image
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/livez || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    environment:
+      <<: *forge-backend-env
+      APP_ROLE: api
+      DATABASE_USERNAME: ${DATABASE_USERNAME:-forge_app}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-#REPLACE_ME#}
+      FORGE_FIELD_ENCRYPTION_KEY: ${FORGE_FIELD_ENCRYPTION_KEY:-#REPLACE_ME#}  # master KEK — api only
+      FORGE_EDGE_KEK: ${FORGE_EDGE_KEK:-#REPLACE_ME#}                          # to wrap edge key at bootstrap
+      EDGE_INTERNAL_TOKEN: ${EDGE_INTERNAL_TOKEN:-#REPLACE_ME#}
+    volumes:
+      - ./volumes/storage:/forge-shared/storage
+      - ${FORGE_CA_FILE:-/dev/null}:/etc/forge/ca-bundle.crt:ro   # private CA (no-op when FORGE_CA_FILE unset)
+    depends_on:
+      postgres: { condition: service_healthy, required: false }
+      mysql: { condition: service_healthy, required: false }
+      redis: { condition: service_started, required: false }
+      valkey: { condition: service_started, required: false }
+    networks: [internal]
+
+  # ---- public validation edge (NO master KEK; restricted DB account; only public backend port) -
+  forge-edge:
+    image: *api-image
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8081/readyz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081"]
+    environment:
+      <<: *forge-backend-env
+      APP_ROLE: edge
+      APP_BASE_URL: ${EDGE_BASE_URL:-http://localhost}
+      DATABASE_USERNAME: ${EDGE_DATABASE_USERNAME:-forge_edge}
+      DATABASE_PASSWORD: ${EDGE_DATABASE_PASSWORD:-#REPLACE_ME#}
+      FORGE_EDGE_KEK: ${FORGE_EDGE_KEK:-#REPLACE_ME#}                          # edge KEK ONLY
+      EDGE_INTERNAL_TOKEN: ${EDGE_INTERNAL_TOKEN:-#REPLACE_ME#}
+    volumes:
+      - ${FORGE_CA_FILE:-/dev/null}:/etc/forge/ca-bundle.crt:ro   # private CA (no-op when unset)
+    ports:
+      - "${EDGE_PORT:-8081}:8081"
+    depends_on:
+      forge-api: { condition: service_healthy }
+    networks: [internal, public]
+
+  forge-worker:
+    image: *api-image
+    restart: always
+    command: ["celery", "-A", "app.worker", "worker", "-Q", "${CELERY_QUEUES:-email,default}", "--loglevel=info"]
+    environment:
+      <<: *forge-backend-env
+      APP_ROLE: worker
+      DATABASE_USERNAME: ${DATABASE_USERNAME:-forge_app}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-#REPLACE_ME#}
+      FORGE_FIELD_ENCRYPTION_KEY: ${FORGE_FIELD_ENCRYPTION_KEY:-#REPLACE_ME#}
+    volumes:
+      - ${FORGE_CA_FILE:-/dev/null}:/etc/forge/ca-bundle.crt:ro   # private CA (no-op when unset)
+    depends_on:
+      forge-api: { condition: service_healthy }
+    networks: [internal]
+
+  forge-scheduler:
+    image: *api-image
+    restart: always
+    command: ["celery", "-A", "app.worker", "beat", "--loglevel=info"]
+    environment:
+      <<: *forge-backend-env
+      APP_ROLE: scheduler
+      DATABASE_USERNAME: ${DATABASE_USERNAME:-forge_app}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-#REPLACE_ME#}
+      FORGE_FIELD_ENCRYPTION_KEY: ${FORGE_FIELD_ENCRYPTION_KEY:-#REPLACE_ME#}
+    volumes:
+      - ${FORGE_CA_FILE:-/dev/null}:/etc/forge/ca-bundle.crt:ro   # private CA (no-op when unset)
+    depends_on:
+      forge-api: { condition: service_healthy }
+    networks: [internal]
+
+  # ---- admin console (nginx SPA + /admin-api reverse proxy) ------------------------------------
+  forge-web:
+    image: ${REGISTRY:-crpi-ew8juv9423tvogc4.cn-hongkong.personal.cr.aliyuncs.com/navtra-mirror}/forge-web:${FORGE_TAG:-v1.0.0}
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    environment:
+      FORGE_API_UPSTREAM: ${FORGE_API_UPSTREAM:-forge-api:8080}
+      NGINX_ENVSUBST_FILTER: FORGE_
+    ports:
+      - "${WEB_PORT:-80}:80"
+    depends_on:
+      forge-api: { condition: service_healthy }
+    networks: [internal, public]
+
+  # ============================================================================================
+  # Optional bundled datastores — pick with `--profile`. Production: prefer external/managed.
+  # ============================================================================================
+  postgres:
+    # Bundled PostgreSQL — starts by default (`docker compose up -d`). To use an EXTERNAL database
+    # instead, point DATABASE_* in .env at it and remove/comment this service.
+    image: postgres:18-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${DATABASE_USERNAME:-forge_app}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-#REPLACE_ME#}
+      POSTGRES_DB: ${DATABASE_NAME:-forge_main}
+      # passed through so the init script creates the restricted forge_edge role with THIS password.
+      EDGE_DATABASE_PASSWORD: ${EDGE_DATABASE_PASSWORD:-#REPLACE_ME#}
+      TZ: UTC
+    volumes:
+      - ./init:/docker-entrypoint-initdb.d:ro      # restricted edge role + audit REVOKE
+      - ./volumes/postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME:-forge_app} -d ${DATABASE_NAME:-forge_main}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [internal]
+
+  mysql:
+    image: mysql:8.4
+    profiles: [mysql]
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DATABASE_PASSWORD:-#REPLACE_ME#}
+      MYSQL_DATABASE: ${DATABASE_NAME:-forge_main}
+      MYSQL_USER: ${DATABASE_USERNAME:-forge_app}
+      MYSQL_PASSWORD: ${DATABASE_PASSWORD:-#REPLACE_ME#}
+    volumes:
+      - ./volumes/mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-p${DATABASE_PASSWORD:-#REPLACE_ME#}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [internal]
+
+  # 达梦 DM8 (信创). The image must bundle the DM native client libs; set DATABASE_TYPE=dameng.
+  dameng:
+    image: ${DAMENG_IMAGE:-REPLACE_WITH_DAMENG_IMAGE}   # vendor DM8 image (set DAMENG_IMAGE in .env)
+    profiles: [dameng]
+    restart: always
+    environment:
+      PAGE_SIZE: "16"
+      LD_LIBRARY_PATH: /opt/dmdbms/bin
+    volumes:
+      - ./volumes/dameng:/opt/dmdbms/data
+    networks: [internal]
+
+  redis:
+    # Bundled Redis — starts by default. To use an EXTERNAL cache, point CACHE_* in .env at it and
+    # remove/comment this service.
+    image: redis:8.8-alpine
+    restart: always
+    command: ["redis-server", "--requirepass", "${CACHE_PASSWORD:-#REPLACE_ME#}", "--appendonly", "yes"]
+    volumes:
+      - ./volumes/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${CACHE_PASSWORD:-#REPLACE_ME#}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [internal]
+
+  # Valkey (信创/SSPL-averse) — set CACHE_TYPE=valkey, CACHE_HOST=valkey.
+  valkey:
+    image: valkey/valkey:8.1-alpine
+    profiles: [valkey]
+    restart: always
+    command: ["valkey-server", "--requirepass", "${CACHE_PASSWORD:-#REPLACE_ME#}", "--appendonly", "yes"]
+    volumes:
+      - ./volumes/valkey:/data
+    networks: [internal]
+
+  # Self-hosted S3 (default object storage). Set OBJECT_STORAGE_TYPE=s3 + endpoint=http://seaweedfs:8333.
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.80
+    profiles: [seaweedfs]
+    restart: always
+    command: "server -s3 -dir=/data"
+    volumes:
+      - ./volumes/seaweedfs:/data
+    networks: [internal]
+
+  # Optional search. Set SEARCH_ENABLED=true, SEARCH_HOST=opensearch.
+  opensearch:
+    image: opensearchproject/opensearch:3.0.0
+    profiles: [search]
+    restart: always
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      - ./volumes/opensearch:/usr/share/opensearch/data
+    networks: [internal]
+
+networks:
+  internal:        # signing core + datastores; not reachable from outside
+  public:          # only forge-edge + forge-web attach here

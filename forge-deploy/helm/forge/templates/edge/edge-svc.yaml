@@ -1,0 +1,19 @@
+{{- if .Values.edge.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "forge.fullname" . }}-edge
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+    app: {{ template "forge.fullname" . }}-edge
+spec:
+  type: ClusterIP
+  selector:
+{{- include "forge.selectorLabels" . | nindent 4 }}
+    app: {{ template "forge.fullname" . }}-edge
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081
+      protocol: TCP
+{{- end }}

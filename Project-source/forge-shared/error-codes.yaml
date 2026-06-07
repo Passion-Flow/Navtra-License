@@ -1,0 +1,56 @@
+# Forge error-code dictionary — single source of truth (HARD RULE: error-codes.md).
+# Backend loads this into memory; frontend build syncs it to locales/<lang>/errors.json.
+# Each code: http status, bilingual message (zh-CN + en), log_level.
+# Business code NEVER raises bare strings; only `raise BizError("<CODE>")`.
+
+# ---- Auth ----------------------------------------------------------------
+AUTH_REQUIRED:               { http: 401, log_level: info,  message: { zh-CN: "需要登录.", en: "Authentication required." } }
+AUTH_INVALID_CREDENTIALS:    { http: 401, log_level: warning, message: { zh-CN: "邮箱或密码错误.", en: "Invalid email or password." } }
+AUTH_ACCOUNT_LOCKED:         { http: 423, log_level: warning, message: { zh-CN: "账号已锁定，请稍后重试.", en: "Account locked, try again later." } }
+AUTH_ACCOUNT_DISABLED:       { http: 403, log_level: warning, message: { zh-CN: "账号已停用.", en: "Account disabled." } }
+AUTH_PASSWORD_WEAK:          { http: 400, log_level: info,  message: { zh-CN: "密码强度不足.", en: "Password does not meet policy." } }
+AUTH_PASSWORD_RESET_TOKEN_INVALID: { http: 400, log_level: warning, message: { zh-CN: "重置链接无效或已过期.", en: "Reset link invalid or expired." } }
+AUTH_2FA_REQUIRED:           { http: 403, log_level: info,  message: { zh-CN: "需要两步验证.", en: "Two-step verification required." } }
+AUTH_2FA_INVALID:            { http: 400, log_level: warning, message: { zh-CN: "验证码错误.", en: "Invalid verification code." } }
+
+# ---- Permission ----------------------------------------------------------
+PERM_DENIED:                 { http: 403, log_level: warning, message: { zh-CN: "无权执行此操作.", en: "Permission denied." } }
+PERM_ROLE_REQUIRED:          { http: 403, log_level: warning, message: { zh-CN: "需要更高权限角色.", en: "A higher-privilege role is required." } }
+
+# ---- Validation / Resource ----------------------------------------------
+VALIDATION_FAILED:           { http: 400, log_level: info,  message: { zh-CN: "请求参数校验失败.", en: "Validation failed." } }
+RESOURCE_NOT_FOUND:          { http: 404, log_level: info,  message: { zh-CN: "资源不存在.", en: "Resource not found." } }
+RESOURCE_CONFLICT:           { http: 409, log_level: info,  message: { zh-CN: "资源已存在或冲突.", en: "Resource conflict." } }
+USER_SELF_LOCKOUT:           { http: 409, log_level: warning, message: { zh-CN: "不能停用、降级或删除自己.", en: "You cannot disable, demote, or delete your own account." } }
+USER_LAST_SUPER_ADMIN:       { http: 409, log_level: warning, message: { zh-CN: "不能移除最后一个超级管理员.", en: "Cannot remove the last super admin." } }
+RESOURCE_GONE:               { http: 410, log_level: info,  message: { zh-CN: "资源已删除.", en: "Resource gone." } }
+
+# ---- Rate limit ----------------------------------------------------------
+RATE_LIMIT_EXCEEDED:         { http: 429, log_level: warning, message: { zh-CN: "请求过于频繁，请稍后再试.", en: "Too many requests." } }
+RATE_LIMIT_LOGIN_BLOCKED:    { http: 429, log_level: warning, message: { zh-CN: "登录尝试过于频繁.", en: "Too many login attempts." } }
+
+# ---- System / External ---------------------------------------------------
+SYSTEM_INTERNAL_ERROR:       { http: 500, log_level: error, message: { zh-CN: "系统内部错误.", en: "Internal server error." } }
+EXTERNAL_SERVICE_UNAVAILABLE: { http: 503, log_level: error, message: { zh-CN: "依赖服务不可用.", en: "Dependency unavailable." } }
+EXTERNAL_SERVICE_TIMEOUT:    { http: 504, log_level: error, message: { zh-CN: "依赖服务超时.", en: "Dependency timeout." } }
+
+# ---- License (Forge business domain) ------------------------------------
+LICENSE_REVOKED:             { http: 403, log_level: warning, message: { zh-CN: "许可证已吊销.", en: "License revoked." } }
+LICENSE_EXPIRED:             { http: 403, log_level: warning, message: { zh-CN: "许可证已过期.", en: "License expired." } }
+LICENSE_BINDING_MISMATCH:    { http: 403, log_level: warning, message: { zh-CN: "许可证与本机硬件不匹配.", en: "License binding mismatch." } }
+LICENSE_SEAT_EXCEEDED:       { http: 403, log_level: warning, message: { zh-CN: "许可证激活数量已超上限.", en: "License seat limit exceeded." } }
+LICENSE_SEAT_LOCK_BUSY:      { http: 503, log_level: warning, message: { zh-CN: "激活并发繁忙，请重试.", en: "Activation busy, please retry." } }
+LICENSE_LEASE_EXPIRED:       { http: 403, log_level: warning, message: { zh-CN: "在线租约已过期.", en: "Online lease expired." } }
+LICENSE_INVALID_SIGNATURE:   { http: 403, log_level: warning, message: { zh-CN: "许可证签名无效.", en: "License signature invalid." } }
+LICENSE_NOT_ACTIVATED:       { http: 409, log_level: info,  message: { zh-CN: "在线许可证尚未激活.", en: "Online license not activated." } }
+
+# ---- Issuance ------------------------------------------------------------
+ISSUE_INVALID_TERM:          { http: 400, log_level: info,  message: { zh-CN: "有效期档位非法.", en: "Invalid validity term." } }
+ISSUE_DEPLOYMENT_ID_REQUIRED: { http: 400, log_level: info, message: { zh-CN: "离线签发需要部署ID.", en: "Offline issuance requires a deployment ID." } }
+ISSUE_DEPLOYMENT_ID_INVALID:  { http: 400, log_level: info, message: { zh-CN: "部署ID格式非法：应为产品生成的 64 位十六进制硬件指纹.", en: "Invalid deployment ID: expected the product's 64-char hex hardware fingerprint." } }
+ISSUE_PRODUCT_INACTIVE:      { http: 409, log_level: info,  message: { zh-CN: "产品已停用，无法签发.", en: "Product inactive, cannot issue." } }
+
+# ---- Edge / Key ----------------------------------------------------------
+EDGE_UPSTREAM_UNAVAILABLE:   { http: 503, log_level: error, message: { zh-CN: "校验服务暂不可用.", en: "Validation service temporarily unavailable." } }
+KEY_ROTATION_CONFLICT:       { http: 409, log_level: warning, message: { zh-CN: "密钥轮换冲突.", en: "Key rotation conflict." } }
+KEY_NOT_FOUND:               { http: 404, log_level: error, message: { zh-CN: "签名密钥不存在.", en: "Signing key not found." } }

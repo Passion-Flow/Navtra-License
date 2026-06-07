@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Forge design tokens (editorial / Linear-Vercel restraint, not generic-AI) ──
+   neutral-first: colour communicates status only; hierarchy comes from type + hairlines. */
+:root {
+  --bg: #fbfbfa;          /* warm off-white, not pure #fff */
+  --surface: #ffffff;
+  --border: #ececec;      /* hairline */
+  --text: #18181b;
+  --muted: #71717a;
+}
+.dark {
+  --bg: #0b0b0c;          /* near-black, not slate */
+  --surface: #131315;
+  --border: #232327;
+  --text: #fafafa;
+  --muted: #8b8b92;
+}
+
+html { font-size: 15px; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* tabular figures for all data/metrics so columns align like a ledger */
+.tnum, table, .metric { font-variant-numeric: tabular-nums; }
+
+/* tighter, calmer base for a B2B power-tool feel */
+* { letter-spacing: -0.006em; }

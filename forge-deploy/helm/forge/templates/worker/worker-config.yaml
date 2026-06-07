@@ -1,0 +1,17 @@
+{{- if .Values.worker.enabled }}
+{{- $db := include "forge.datasource" . | fromJson }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "forge.fullname" . }}-worker-config
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+data:
+  APP_ROLE: "worker"
+  APP_ENV: "production"
+  APP_DEBUG: "false"
+  LOG_LEVEL: {{ .Values.global.log.level | quote }}
+  TZ: {{ .Values.global.timezone | quote }}
+  CELERY_QUEUES: {{ .Values.worker.queues | quote }}
+  DATABASE_USERNAME: {{ $db.username | quote }}
+{{- end }}

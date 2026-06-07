@@ -1,0 +1,585 @@
+# Default values for forge.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+###################################
+# Global
+###################################
+global:
+  # -------- deployment meta --------
+  # SELF_HOSTED or CLOUD (informational only).
+  edition: "SELF_HOSTED"
+
+  # Allow the bundled-trial Bitnami subcharts to run their "legacy" images (only consulted when
+  # postgresql/redis.enabled=true — no effect on the default external-DB private deployment).
+  security:
+    allowInsecureImages: true
+
+  # -------- ingress-facing network --------
+  # TLS at the ingress. When true the console/edge URLs are built as https:// and use port 443.
+  useTLS: false
+  # External port browsers use (80 for http, 443 for https). Set for non-standard NodePort/LB ports.
+  externalPort: 80
+  # Public domains. admin = console + /admin-api (forge-web); edge = public license validation (forge-edge).
+  adminDomain: "forge.example.com"
+  edgeDomain: "edge.forge.example.com"
+
+  # -------- runtime behaviour --------
+  # Run alembic migrations on api startup before it begins serving.
+  dbMigrationEnabled: true
+  # Default timezone for all Forge pods.
+  timezone: "UTC"
+
+  # -------- logging --------
+  log:
+    # DEBUG | INFO | WARNING | ERROR
+    level: "INFO"
+    # json (machine-readable, recommended) | console
+    outputFormat: "json"
+
+  # -------- scheduling (applies to every Forge pod unless overridden per-component) --------
+  # Extra labels applied to all Forge workload Pods (pod templates). Ignored when empty.
+  podLabels: {}
+  # 信创: pin onto a CPU arch if a cluster mixes arches (images are multi-arch amd64+arm64 by default).
+  # e.g. { kubernetes.io/arch: arm64 }   (Kunpeng/Phytium = arm64; Hygon/Zhaoxin = amd64)
+  nodeSelector: {}
+
+  # -------- private CA (MOST IMPORTANT for 私有化 / 信创 intranets) --------
+  # When your database / object storage / mail / search endpoints present certificates signed by a
+  # PRIVATE / self-signed CA, enable this so every backend pod trusts that CA. An initContainer
+  # merges the system CA bundle with your CA into one file and points SSL_CERT_FILE / REQUESTS_CA_BUNDLE
+  # / SSL_CERT_DIR at it (covers Python httpx / requests / boto3 / asyncpg-TLS / aiomysql-TLS).
+  customCA:
+    enabled: false
+    # Name of an EXISTING Secret holding the CA certificate (create it yourself, see README).
+    #   kubectl -n <ns> create secret generic forge-custom-ca --from-file=ca.crt=/path/to/your-ca.crt
+    existingSecret: ""
+    # Key inside that Secret that contains the PEM CA certificate.
+    key: ca.crt
+    # Mount path of the combined CA bundle inside the pods (SSL_CERT_FILE points to <mountPath>/ca-bundle.crt).
+    # NOTE: changes require a pod restart — the bundle is built once by the initContainer at start.
+    mountPath: /etc/forge/custom-ca
+    # Init image used to copy the system CAs before appending your CA. For air-gapped clusters replace
+    # with a private-registry mirror containing /etc/ssl/certs/ca-certificates.crt (Debian) or
+    # /etc/ssl/cert.pem (Alpine).
+    initImage: alpine:3.20
+
+###################################
+# Ingress
+###################################
+ingress:
+  enabled: false
+  # Use the node IP as the host (single-host trials). admin/edge then share the IP by path.
+  useIpAsHost: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/tls-acme: "true"
+  tls: []
+
+###################################
+# Secrets (field-encryption KEKs + internal token)
+# Generate KEKs with: openssl rand -base64 32   (master and edge MUST differ)
+###################################
+secret:
+  existingSecret: ""
+  masterKek: "#REPLACE_ME#"            # FORGE_FIELD_ENCRYPTION_KEY — api/worker/scheduler ONLY
+  edgeKek: "#REPLACE_ME#"              # FORGE_EDGE_KEK — api (bootstrap) + edge; cannot decrypt master
+  edgeInternalToken: "#REPLACE_ME#"    # EDGE_INTERNAL_TOKEN
+
+###################################
+# Components (5 roles, 2 images). Per-component image.{repository,tag} override the global image.
+###################################
+api:
+  enabled: true
+  image:
+    repository: crpi-ew8juv9423tvogc4.cn-hongkong.personal.cr.aliyuncs.com/navtra-mirror/forge-api
+    tag: "v1.0.0"          # empty => Chart.appVersion
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources: {}
+  #  requests:
+  #    cpu: 250m
+  #    memory: 512Mi
+  #  limits:
+  #    cpu: 1
+  #    memory: 1Gi
+  serviceAccountName: ""
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  # Probes tuned for first-boot DB migration time (Forge endpoints: /readyz, /livez on 8080).
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: 8080
+      scheme: HTTP
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 3
+    failureThreshold: 30
+  livenessProbe:
+    httpGet:
+      path: /livez
+      port: 8080
+      scheme: HTTP
+    initialDelaySeconds: 120     # allow migrations to finish before liveness kicks in
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 3
+    failureThreshold: 3
+  # Apply your own environment variables if necessary. Demo:
+  # extraEnv:
+  #   - name: MY_FLAG
+  #     value: "1"
+  extraEnv: []
+  # SQLAlchemy connection pool (maps to DATABASE_POOL_*).
+  db:
+    poolSize: 20
+    maxOverflow: 10
+    poolTimeout: 30
+
+edge:
+  enabled: true
+  image:
+    repository: crpi-ew8juv9423tvogc4.cn-hongkong.personal.cr.aliyuncs.com/navtra-mirror/forge-api
+    tag: "v1.0.0"          # same image as api, run with APP_ROLE=edge
+    pullPolicy: IfNotPresent
+  replicas: 2           # public tier — scale horizontally
+  resources: {}
+  #  requests:
+  #    cpu: 100m
+  #    memory: 256Mi
+  #  limits:
+  #    cpu: 500m
+  #    memory: 512Mi
+  serviceAccountName: ""
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: 8081
+      scheme: HTTP
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 3
+    failureThreshold: 10
+  livenessProbe:
+    httpGet:
+      path: /livez
+      port: 8081
+      scheme: HTTP
+    initialDelaySeconds: 60
+    periodSeconds: 15
+    successThreshold: 1
+    timeoutSeconds: 3
+    failureThreshold: 3
+  # Apply your own environment variables if necessary. Demo:
+  # extraEnv:
+  #   - name: MY_FLAG
+  #     value: "1"
+  extraEnv: []
+
+worker:
+  enabled: true
+  image:
+    repository: crpi-ew8juv9423tvogc4.cn-hongkong.personal.cr.aliyuncs.com/navtra-mirror/forge-api
+    tag: "v1.0.0"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  # Celery queues this worker consumes (comma-separated).
+  queues: "email,default"
+  # Celery concurrency = number of child worker processes. Empty => Celery default (= CPU count).
+  concurrency: ""
+  resources: {}
+  #  requests:
+  #    cpu: 250m
+  #    memory: 512Mi
+  #  limits:
+  #    cpu: 1
+  #    memory: 1Gi
+  serviceAccountName: ""
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  # Liveness: ping the Celery worker; the pod is restarted if it stops responding.
+  livenessProbe:
+    exec:
+      command: ["sh", "-c", "celery -A app.worker inspect ping -d celery@$(hostname) >/dev/null 2>&1"]
+    initialDelaySeconds: 60
+    periodSeconds: 60
+    timeoutSeconds: 15
+    failureThreshold: 3
+  # Apply your own environment variables if necessary. Demo:
+  # extraEnv:
+  #   - name: MY_FLAG
+  #     value: "1"
+  extraEnv: []
+
+scheduler:
+  enabled: true
+  image:
+    repository: crpi-ew8juv9423tvogc4.cn-hongkong.personal.cr.aliyuncs.com/navtra-mirror/forge-api
+    tag: "v1.0.0"
+    pullPolicy: IfNotPresent
+  replicas: 1           # keep at 1 (singleton celery beat)
+  resources: {}
+  #  requests:
+  #    cpu: 50m
+  #    memory: 128Mi
+  #  limits:
+  #    cpu: 200m
+  #    memory: 256Mi
+  serviceAccountName: ""
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  # Liveness: the celery-beat process must be alive (the pod is restarted otherwise).
+  livenessProbe:
+    exec:
+      command: ["sh", "-c", "pgrep -f 'celery.*beat' >/dev/null"]
+    initialDelaySeconds: 60
+    periodSeconds: 60
+    timeoutSeconds: 10
+    failureThreshold: 3
+  # Apply your own environment variables if necessary. Demo:
+  # extraEnv:
+  #   - name: MY_FLAG
+  #     value: "1"
+  extraEnv: []
+
+web:
+  enabled: true
+  image:
+    repository: crpi-ew8juv9423tvogc4.cn-hongkong.personal.cr.aliyuncs.com/navtra-mirror/forge-web
+    tag: "v1.0.0"
+    pullPolicy: IfNotPresent
+  replicas: 2
+  resources: {}
+  #  requests:
+  #    cpu: 50m
+  #    memory: 64Mi
+  #  limits:
+  #    cpu: 200m
+  #    memory: 256Mi
+  serviceAccountName: ""
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  readinessProbe:
+    httpGet:
+      path: /
+      port: 80
+      scheme: HTTP
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 3
+    failureThreshold: 6
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 80
+      scheme: HTTP
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    successThreshold: 1
+    timeoutSeconds: 3
+    failureThreshold: 3
+  # Apply your own environment variables if necessary. Demo:
+  # extraEnv:
+  #   - name: MY_FLAG
+  #     value: "1"
+  extraEnv: []
+
+###################################
+# Database
+###################################
+database:
+  enabled: true
+  # The database type, support: postgres, mysql, tidb, oracle, dameng, opengauss, kingbase, oceanbase, polardb-pg, polardb-x
+  # postgres/opengauss/kingbase/polardb-pg use the PostgreSQL wire; mysql/tidb/oceanbase/polardb-x use the MySQL wire.
+  type: "postgres"
+  # forge-edge connects as this RESTRICTED account (cannot read the master key ciphertext).
+  edgeUsername: "forge_edge"
+  edgePassword: "#REPLACE_ME#"
+
+  # External PostgreSQL
+  externalPostgres:
+    host: "postgres.example"
+    port: 5432
+    username: "forge_app"
+    password: "#REPLACE_ME#"
+    database: "forge_main"
+    sslMode: "require"     # disable | allow | prefer | require | verify-ca | verify-full
+  # External MySQL
+  externalMysql:
+    host: "mysql.example"
+    port: 3306
+    username: "forge_app"
+    password: "#REPLACE_ME#"
+    database: "forge_main"
+    sslMode: "prefer"
+  # External TiDB (MySQL wire)
+  externalTidb:
+    host: "tidb.example"
+    port: 4000
+    username: "forge_app"
+    password: "#REPLACE_ME#"
+    database: "forge_main"
+    sslMode: "prefer"
+  # External Oracle
+  externalOracle:
+    host: "oracle.example"
+    port: 1521
+    username: "forge_app"
+    password: "#REPLACE_ME#"
+    database: "XEPDB1"     # service name / PDB
+    sslMode: "disable"
+  # External 达梦 DM8 (信创). The forge-api image must bundle the DM native client libs (libdmdpi.so)
+  # and set LD_LIBRARY_PATH; the deployment is driven through the sync-session bridge.
+  externalDameng:
+    host: "dameng.example"
+    port: 5236
+    username: "SYSDBA"
+    password: "#REPLACE_ME#"
+    database: "FORGE"
+    sslMode: "disable"
+  # External openGauss (信创). NOTE: SHA256 auth ≠ standard SCRAM — configure DB-side MD5 auth or use
+  # the sync-session bridge.
+  externalOpengauss:
+    host: "opengauss.example"
+    port: 5432
+    username: "forge_app"
+    password: "#REPLACE_ME#"
+    database: "forge_main"
+    sslMode: "prefer"
+  # External KingbaseES (信创). Same SHA256-auth caveat as openGauss.
+  externalKingbase:
+    host: "kingbase.example"
+    port: 54321
+    username: "forge_app"
+    password: "#REPLACE_ME#"
+    database: "forge_main"
+    sslMode: "prefer"
+  # External OceanBase (信创, MySQL wire)
+  externalOceanbase:
+    host: "oceanbase.example"
+    port: 2881
+    username: "forge_app"
+    password: "#REPLACE_ME#"
+    database: "forge_main"
+    sslMode: "prefer"
+  # External PolarDB-PG (信创, PostgreSQL wire)
+  externalPolardbPg:
+    host: "polardb-pg.example"
+    port: 5432
+    username: "forge_app"
+    password: "#REPLACE_ME#"
+    database: "forge_main"
+    sslMode: "require"
+  # External PolarDB-X (信创, MySQL wire)
+  externalPolardbX:
+    host: "polardb-x.example"
+    port: 3306
+    username: "forge_app"
+    password: "#REPLACE_ME#"
+    database: "forge_main"
+    sslMode: "require"
+
+# Bundled PostgreSQL (bitnami subchart). DISABLED by default — private/on-prem deployments use a
+# customer-managed DB (fill database.external<DB> above). Enable ONLY for a throwaway trial cluster.
+postgresql:
+  enabled: false
+  architecture: standalone
+  # Image from the Bitnami "legacy" repo — the original docker.io/bitnami tags were retired in 2025.
+  # Only used for a throwaway trial cluster; private deployments use an external DB (above).
+  image:
+    repository: bitnamilegacy/postgresql
+  global:
+    postgresql:
+      auth:
+        username: forge_app
+        password: "#REPLACE_ME#"
+        database: forge_main
+
+###################################
+# Cache (Redis / Valkey)
+###################################
+# Customer-managed cache (manual deploy). This is the default path for private deployments.
+externalRedis:
+  enabled: true
+  # The cache type, support: redis, valkey
+  type: "redis"
+  useSSL: false
+  host: "redis.example"
+  port: 6379
+  username: ""
+  password: "#REPLACE_ME#"
+  db: 0
+
+# Bundled Redis (bitnami subchart). DISABLED by default — private deployments use externalRedis
+# (or a 信创 Valkey) above. Enable ONLY for a throwaway trial cluster.
+redis:
+  enabled: false
+  architecture: standalone
+  # Image from the Bitnami "legacy" repo (the original docker.io/bitnami tags were retired in 2025).
+  image:
+    repository: bitnamilegacy/redis
+  global:
+    redis:
+      password: "#REPLACE_ME#"
+
+###################################
+# Persistence / Object storage (license artifacts + CRL)
+###################################
+persistence:
+  enabled: true
+  # The storage type support: local, s3, aliyun-oss, tencent-cos, volcengine-tos, huawei-obs, azure-blob, google-storage
+  type: "local"
+  bucket: "forge"
+  local:
+    accessMode: ReadWriteOnce
+    size: 10Gi
+    storageClass: ""
+    existingClaim: ""
+  s3:
+    endpoint: "https://s3.amazonaws.com"
+    region: "us-east-1"
+    accessKey: "#REPLACE_ME#"
+    secretKey: "#REPLACE_ME#"
+    secure: true
+  aliyunOss:
+    endpoint: "https://oss-cn-hangzhou.aliyuncs.com"
+    region: "cn-hangzhou"
+    accessKey: "#REPLACE_ME#"
+    secretKey: "#REPLACE_ME#"
+    secure: true
+  tencentCos:
+    endpoint: "https://cos.ap-guangzhou.myqcloud.com"
+    region: "ap-guangzhou"
+    accessKey: "#REPLACE_ME#"
+    secretKey: "#REPLACE_ME#"
+    secure: true
+  volcengineTos:
+    endpoint: "https://tos-s3-cn-beijing.volces.com"
+    region: "cn-beijing"
+    accessKey: "#REPLACE_ME#"
+    secretKey: "#REPLACE_ME#"
+    secure: true
+  huaweiObs:
+    endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
+    region: "cn-north-4"
+    accessKey: "#REPLACE_ME#"
+    secretKey: "#REPLACE_ME#"
+    secure: true
+  azureBlob:
+    # account-keyed; endpoint is the blob account URL (or Azurite/Azure Stack endpoint)
+    endpoint: ""
+    accountName: ""
+    accountKey: "#REPLACE_ME#"
+    secure: true
+  googleStorage:
+    # the service-account JSON key file content
+    serviceAccountJson: "#REPLACE_ME#"
+    secure: true
+
+###################################
+# Mail (expiry reminders)
+###################################
+mail:
+  enabled: false
+  # The mail type, support: smtp, aws_ses, sendgrid, aliyun_dm, tencent_ses, volcengine_dm
+  # smtp covers 信创/enterprise mail (Coremail etc.); 465/994 implicit TLS or STARTTLS.
+  type: "smtp"
+  fromAddress: "forge@navtra.ai"
+  fromName: "Forge"
+  smtp:
+    host: "smtp.example"
+    port: 465
+    username: ""
+    password: "#REPLACE_ME#"
+    useTls: true
+  awsSes:
+    region: "us-east-1"
+    accessKey: "#REPLACE_ME#"
+    secretKey: "#REPLACE_ME#"
+  sendgrid:
+    apiKey: "#REPLACE_ME#"
+  aliyunDm:
+    region: "cn-hangzhou"
+    accessKey: "#REPLACE_ME#"
+    secretKey: "#REPLACE_ME#"
+  tencentSes:
+    region: "ap-guangzhou"
+    accessKey: "#REPLACE_ME#"
+    secretKey: "#REPLACE_ME#"
+  volcengineDm:
+    region: "cn-north-1"
+    accessKey: "#REPLACE_ME#"
+    secretKey: "#REPLACE_ME#"
+
+###################################
+# Search (optional)
+###################################
+search:
+  enabled: false
+  # The search type, support: opensearch, elasticsearch, transwarp, easysearch, huawei-css, aliyun-es, tencent-es
+  type: "opensearch"
+  indexPrefix: "forge"
+  opensearch:
+    host: "opensearch.example"
+    port: 9200
+    username: ""
+    password: "#REPLACE_ME#"
+    useSsl: true
+  elasticsearch:
+    host: "elasticsearch.example"
+    port: 9200
+    username: "elastic"
+    password: "#REPLACE_ME#"
+    useSsl: true
+  transwarp:
+    host: "transwarp.example"
+    port: 9200
+    username: ""
+    password: "#REPLACE_ME#"
+    useSsl: true
+  easysearch:
+    host: "easysearch.example"
+    port: 9200
+    username: "admin"
+    password: "#REPLACE_ME#"
+    useSsl: true
+  huaweiCss:
+    host: "css.example"
+    port: 9200
+    username: "admin"
+    password: "#REPLACE_ME#"
+    useSsl: true
+  aliyunEs:
+    host: "aliyun-es.example"
+    port: 9200
+    username: "elastic"
+    password: "#REPLACE_ME#"
+    useSsl: true
+  tencentEs:
+    host: "tencent-es.example"
+    port: 9200
+    username: "elastic"
+    password: "#REPLACE_ME#"
+    useSsl: true
+
+###################################
+# Image pull secrets (private registry / Harbor)
+###################################
+# Pull secret(s) used by EVERY Forge pod to pull images from a private registry (e.g. an internal
+# Harbor). Create the secret with Scripts/generate-image-repo-secret.sh — it produces a secret named
+# `forge-image-repo-secret`. Then uncomment the entry below (or pass --set).
+#   ./Scripts/generate-image-repo-secret.sh <harbor-user> <harbor-pass> <namespace> <registry-url>
+imagePullSecrets: []
+  # - name: forge-image-repo-secret
+

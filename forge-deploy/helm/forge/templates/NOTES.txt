@@ -1,0 +1,22 @@
+Forge {{ .Chart.AppVersion }} — release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Components deployed:
+  {{ if .Values.api.enabled }}✓{{ else }}✗{{ end }} forge-api        (signing core, internal)
+  {{ if .Values.edge.enabled }}✓{{ else }}✗{{ end }} forge-edge       (public validation)
+  {{ if .Values.worker.enabled }}✓{{ else }}✗{{ end }} forge-worker     (celery)
+  {{ if .Values.scheduler.enabled }}✓{{ else }}✗{{ end }} forge-scheduler  (celery beat)
+  {{ if .Values.web.enabled }}✓{{ else }}✗{{ end }} forge-web        (admin console)
+
+  Admin : {{ if .Values.global.useTLS }}https{{ else }}http{{ end }}://{{ .Values.global.adminDomain }}
+  Edge  : {{ if .Values.global.useTLS }}https{{ else }}http{{ end }}://{{ .Values.global.edgeDomain }}
+
+SECURITY CHECKLIST (must hold before going live):
+  1. secret.masterKek and secret.edgeKek are DISTINCT base64 32-byte values (openssl rand -base64 32).
+  2. No #REPLACE_ME# placeholders remain — the api/edge pods fail closed on an empty/invalid KEK.
+  3. forge-edge connects as the restricted DB account (database.edgeUsername) that cannot
+     read the master key ciphertext. The forge-edge pod has NO master KEK by design.
+  4. The audit_log REVOKE UPDATE,DELETE grant is applied to the business DB role.
+
+Verify:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ template "forge.fullname" . }}-api | grep "Application startup complete"

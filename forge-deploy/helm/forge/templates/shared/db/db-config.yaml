@@ -1,0 +1,17 @@
+{{- if and .Values.database.enabled (or .Values.api.enabled .Values.edge.enabled .Values.worker.enabled .Values.scheduler.enabled) }}
+{{- $db := include "forge.datasource" . | fromJson }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "forge.fullname" . }}-shared-db-config
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+data:
+  # Non-credential DB connection (the per-tier DATABASE_USERNAME/PASSWORD live in each component's
+  # config/secret so forge-edge can use a restricted account).
+  DATABASE_TYPE: {{ $db.type | quote }}
+  DATABASE_HOST: {{ $db.host | quote }}
+  DATABASE_PORT: {{ $db.port | toString | quote }}
+  DATABASE_NAME: {{ $db.name | quote }}
+  DATABASE_SSL_MODE: {{ $db.sslMode | quote }}
+{{- end }}

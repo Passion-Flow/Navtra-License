@@ -1,0 +1,12 @@
+<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="forgeFav" x1="6" y1="2" x2="42" y2="46" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#0043ce"/>
+    </linearGradient>
+  </defs>
+  <!-- forged hexagonal token -->
+  <path d="M24 2 41.7 12 41.7 36 24 46 6.3 36 6.3 12Z" fill="url(#forgeFav)"/>
+  <!-- spark / ember -->
+  <path d="M24 11 27.2 20.8 37 24 27.2 27.2 24 37 20.8 27.2 11 24 20.8 20.8Z" fill="#fff"/>
+</svg>

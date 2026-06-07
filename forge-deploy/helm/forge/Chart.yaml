@@ -1,0 +1,31 @@
+apiVersion: v2
+name: forge
+description: Forge — vendor License Authority (signing core + public edge + worker/scheduler + admin web)
+type: application
+version: 1.0.0
+appVersion: "v1.0.0"
+home: https://navtra.ai
+icon: https://navtra.ai/favicon.ico
+keywords:
+  - license
+  - signing
+  - ed25519
+  - 信创
+sources:
+  - https://navtra.ai
+maintainers:
+  - name: navtra
+    email: forge@navtra.ai
+dependencies:
+  - name: postgresql
+    repository: oci://registry-1.docker.io/bitnamicharts
+    version: 16.7.27
+    condition: postgresql.enabled
+    tags:
+      - database
+  - name: redis
+    repository: oci://registry-1.docker.io/bitnamicharts
+    version: 20.13.4
+    condition: redis.enabled
+    tags:
+      - cache

@@ -1,0 +1,12 @@
+{{- if .Values.web.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "forge.fullname" . }}-web-config
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+data:
+  # nginx reverse-proxies /admin-api to the internal signing core.
+  FORGE_API_UPSTREAM: {{ printf "%s-api:8080" (include "forge.fullname" .) | quote }}
+  NGINX_ENVSUBST_FILTER: "FORGE_"
+{{- end }}

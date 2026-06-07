@@ -1,0 +1,25 @@
+{{- if and .Values.mail.enabled (or .Values.api.enabled .Values.worker.enabled .Values.scheduler.enabled) }}
+{{- $m := include "forge.mail" . | fromJson }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "forge.fullname" . }}-shared-mail-config
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+data:
+  EMAIL_TYPE: {{ $m.type | quote }}
+  EMAIL_FROM_ADDRESS: {{ .Values.mail.fromAddress | quote }}
+  EMAIL_FROM_NAME: {{ .Values.mail.fromName | quote }}
+  {{- if eq $m.type "smtp" }}
+  EMAIL_HOST: {{ $m.host | quote }}
+  EMAIL_PORT: {{ $m.port | toString | quote }}
+  EMAIL_USE_TLS: {{ $m.useTls | toString | quote }}
+  {{- if $m.username }}
+  EMAIL_USERNAME: {{ $m.username | quote }}
+  {{- end }}
+  {{- else }}
+  {{- if $m.region }}
+  EMAIL_REGION: {{ $m.region | quote }}
+  {{- end }}
+  {{- end }}
+{{- end }}

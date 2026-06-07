@@ -1,0 +1,44 @@
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # security headers (License console — defensive defaults)
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    # HSTS — once a browser is served over HTTPS it refuses plain HTTP for a year. Ignored when the
+    # response is delivered over HTTP, so it is safe to send unconditionally.
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    server_tokens off;
+
+    # NOTE: HTTP→HTTPS enforcement is done at the EDGE, not here — the k8s Ingress carries
+    # `force-ssl-redirect` when global.useTLS is set, and a compose TLS proxy redirects upstream.
+    # forge-web must NOT redirect on X-Forwarded-Proto, or a plain-HTTP install (no TLS anywhere)
+    # would bounce every request to a non-existent HTTPS endpoint. HSTS above + Secure cookies +
+    # the edge redirect together make HTTP unusable once TLS is actually enabled.
+
+    # cache hashed static assets aggressively
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # reverse-proxy the admin API to the signing core (never exposed directly)
+    location /admin-api/ {
+        proxy_pass http://${FORGE_API_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+
+    # SPA client-side routing (/<lang>/... falls back to index.html)
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

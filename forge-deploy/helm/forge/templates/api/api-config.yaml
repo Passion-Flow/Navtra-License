@@ -1,0 +1,27 @@
+{{- if .Values.api.enabled }}
+{{- $db := include "forge.datasource" . | fromJson }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "forge.fullname" . }}-api-config
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+data:
+  APP_ROLE: "api"
+  APP_ENV: "production"
+  APP_DEBUG: "false"
+  APP_BASE_URL: {{ printf "%s://%s" (.Values.global.useTLS | ternary "https" "http") .Values.global.adminDomain | quote }}
+  # Session cookie Secure flag follows the scheme: true behind TLS (browser only sends it over
+  # HTTPS); an HTTP-only install MUST set global.useTLS=false or the cookie is dropped and login
+  # silently never sticks.
+  SESSION_COOKIE_SECURE: {{ .Values.global.useTLS | toString | quote }}
+  LOG_LEVEL: {{ .Values.global.log.level | quote }}
+  TZ: {{ .Values.global.timezone | quote }}
+  MIGRATION_ENABLED: {{ .Values.global.dbMigrationEnabled | toString | quote }}
+  # api uses the full-privilege business account.
+  DATABASE_USERNAME: {{ $db.username | quote }}
+  # SQLAlchemy connection pool.
+  DATABASE_POOL_SIZE: {{ .Values.api.db.poolSize | toString | quote }}
+  DATABASE_POOL_MAX_OVERFLOW: {{ .Values.api.db.maxOverflow | toString | quote }}
+  DATABASE_POOL_TIMEOUT: {{ .Values.api.db.poolTimeout | toString | quote }}
+{{- end }}

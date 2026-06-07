@@ -1,0 +1,24 @@
+{{- if and .Values.persistence.enabled (or .Values.api.enabled .Values.edge.enabled .Values.worker.enabled .Values.scheduler.enabled) }}
+{{- $s := include "forge.storage" . | fromJson }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "forge.fullname" . }}-shared-storage-config
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+data:
+  OBJECT_STORAGE_TYPE: {{ $s.type | quote }}
+  OBJECT_STORAGE_BUCKET: {{ .Values.persistence.bucket | quote }}
+  {{- if ne $s.type "local" }}
+  OBJECT_STORAGE_SECURE: {{ $s.secure | toString | quote }}
+  {{- if $s.endpoint }}
+  OBJECT_STORAGE_ENDPOINT: {{ $s.endpoint | quote }}
+  {{- end }}
+  {{- if $s.region }}
+  OBJECT_STORAGE_REGION: {{ $s.region | quote }}
+  {{- end }}
+  {{- if eq $s.type "azure-blob" }}
+  OBJECT_STORAGE_AZURE_ACCOUNT: {{ $s.accountName | quote }}
+  {{- end }}
+  {{- end }}
+{{- end }}

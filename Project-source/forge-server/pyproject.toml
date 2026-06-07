@@ -1,0 +1,97 @@
+[project]
+name = "forge-server"
+version = "1.0.0"
+description = "Forge — vendor License Authority (signing core forge-api + public edge forge-edge + worker + scheduler)"
+requires-python = ">=3.11"
+# Python 3.14-ready pin set (2026-06 research, see Project-Docs/03-Services/xinchuang.md §Python3.14).
+# Every compiled dep below ships cp314 wheels (linux x86_64 + aarch64) — no gcc/Rust builder needed.
+dependencies = [
+  "fastapi>=0.135.0",          # security: pulls patched Starlette (CVE-2026-48710 BadHost auth-bypass)
+  "starlette>=1.0.1",          # explicit floor for the BadHost / Range-ReDoS / multipart-DoS fixes
+  "uvicorn==0.35.0",
+  # uvicorn[standard] compiled extras — pinned to first cp314-wheel versions:
+  "httptools>=0.7.1",
+  "uvloop>=0.22.1",
+  "websockets>=16.0",
+  "watchfiles>=1.1.0",
+  "python-dotenv>=1.0.1",      # the remaining uvicorn[standard] extra (pure-python)
+  "pydantic==2.12.0",          # first to pin a cp314 pydantic-core (2.41)
+  "pydantic-settings==2.7.1",
+  "sqlalchemy[asyncio]==2.0.45",  # native cp314 C-ext
+  "alembic==1.14.0",
+  "asyncpg==0.31.0",           # postgres (default) provider — first cp314 wheels
+  "aiomysql==0.2.0",           # mysql / tidb / oceanbase / polardb-x providers
+  "oracledb==3.3.0",           # oracle provider (thin mode is Cython → needs cp314 wheel)
+  "redis==5.2.1",              # cache / session / lease / ratelimit / lock (pure-python, ok on 3.14)
+  "celery==5.6.3",             # worker + scheduler (5.6+ adds 3.14; pulls cp314 billiard/kombu)
+  "structlog==24.4.0",
+  "argon2-cffi==25.1.0",       # password hashing (argon2id) — pulls bindings 25.1 + cffi>=2.0
+  "cffi>=2.0.0",               # first cffi with cp314 wheels (argon2/pynacl need it on 3.14)
+  "cryptography>=46.0.7",      # Ed25519 + AES-GCM core. SECURITY: 46.0.7 fixes CVE-2026-26007 (EC key leak) / -34073 / -39892
+  "pynacl==1.6.0",             # first pynacl with cp314 wheels (was 1.5.0)
+  "pyotp==2.9.0",             # 2FA TOTP
+  "uuid-utils==0.15.0",        # UUID v7 primary keys (Rust — first cp314 wheels)
+  "typer==0.15.1",            # forge CLI
+  "httpx==0.28.1",
+  "python-multipart>=0.0.26",  # SECURITY: CVE-2026-40347 (multipart DoS) / -24486 fixed in 0.0.26
+  "pyyaml==6.0.3",             # first cp314 wheel (was 6.0.2)
+  "email-validator==2.2.0",
+]
+
+[project.optional-dependencies]
+# Object-storage providers (all-provider rule). The four Chinese clouds (OSS/COS/TOS/OBS)
+# and local-MinIO all expose S3-compatible endpoints, so one battle-tested boto3 client
+# drives them via S3CompatibleStorage; only Azure Blob and GCS need their native SDKs.
+storage = [
+  "boto3==1.35.92",                 # s3 + minio + aliyun-oss + tencent-cos + volcengine-tos + huawei-obs (S3-compatible)
+  "azure-storage-blob==12.24.0",    # azure-blob (native)
+  "google-cloud-storage==2.19.0",   # google-storage (native)
+]
+# Email providers. smtp = stdlib (no dep); sendgrid = httpx (already a core dep).
+email = [
+  "boto3==1.35.92",                       # aws_ses
+  "alibabacloud_dm20151123>=1.10.0",      # aliyun_dm (v2 SDK; classic aliyun-python-sdk-dm is py2-only)
+  "tencentcloud-sdk-python-ses>=3.0.1335", # tencent_ses
+  "volcengine>=1.0.184",                  # volcengine_dm
+  "pycryptodome>=3.21.0",                 # pin to a cp314-wheel build (volcengine dep; avoids source build)
+]
+# Search providers (optional category). opensearch-py drives OpenSearch + all ES-API-compatible
+# 信创 engines (Transwarp/Easysearch/Huawei CSS/Aliyun·Tencent ES). (xinchuang.md §4)
+search = [
+  "opensearch-py[async]>=2.8.0",   # [async] pulls aiohttp for AsyncOpenSearch
+  "aiohttp>=3.12.14",              # SECURITY: CVE-2025-53643 (request smuggling) + 2026 aiohttp fixes
+]
+# 信创 sync-only DB drivers (driven via SyncBridgeSession). Verified installable on Python 3.14.
+dameng = [
+  "dmPython>=2.5.32",              # 达梦 DM8 DB-API driver (has cp314 wheel)
+  "sqlalchemy-dm-dialect>=2.0.0",  # SQLAlchemy 'dm' dialect
+]
+dev = [
+  "pytest==8.3.4",
+  "pytest-asyncio==0.25.0",
+  "ruff==0.8.4",
+  "mypy==1.14.0",
+]
+
+[project.scripts]
+forge = "app.cli:app"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = ["integration: requires a live postgres + redis (FORGE_INTEGRATION=1)"]
+filterwarnings = [
+  "ignore::DeprecationWarning",
+  "ignore::RuntimeWarning",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]

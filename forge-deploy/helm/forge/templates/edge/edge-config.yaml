@@ -1,0 +1,19 @@
+{{- if .Values.edge.enabled }}
+{{- $db := include "forge.datasource" . | fromJson }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "forge.fullname" . }}-edge-config
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+data:
+  APP_ROLE: "edge"
+  APP_ENV: "production"
+  APP_DEBUG: "false"
+  APP_BASE_URL: {{ printf "%s://%s" (.Values.global.useTLS | ternary "https" "http") .Values.global.edgeDomain | quote }}
+  LOG_LEVEL: {{ .Values.global.log.level | quote }}
+  TZ: {{ .Values.global.timezone | quote }}
+  # edge connects as the RESTRICTED account (cannot read the master key ciphertext). For the bundled
+  # postgresql subchart this role must be created out-of-band (see docker-compose/init or your DBA).
+  DATABASE_USERNAME: {{ .Values.database.edgeUsername | quote }}
+{{- end }}

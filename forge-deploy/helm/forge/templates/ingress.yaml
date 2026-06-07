@@ -1,0 +1,65 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ template "forge.fullname" . }}-ingress
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+  {{- if or .Values.global.useTLS .Values.ingress.annotations }}
+  annotations:
+  {{- if .Values.global.useTLS }}
+    # Under TLS, force every plain-HTTP request to redirect to HTTPS — HTTP becomes 100% unusable.
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+  {{- end }}
+  {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
+  {{- if and .Values.global.useTLS .Values.ingress.tls }}
+  tls:
+    {{- toYaml .Values.ingress.tls | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- if .Values.ingress.useIpAsHost }}
+    # single-host / IP mode: admin console on the node IP; access forge-edge via its Service/LB.
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ template "forge.fullname" . }}-web
+                port:
+                  number: 80
+    {{- else }}
+    # admin console (+ /admin-api reverse-proxied by web) -> forge-web
+    - host: {{ .Values.global.adminDomain | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ template "forge.fullname" . }}-web
+                port:
+                  number: 80
+    {{- if .Values.edge.enabled }}
+    # public license validation -> forge-edge
+    - host: {{ .Values.global.edgeDomain | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ template "forge.fullname" . }}-edge
+                port:
+                  number: 8081
+    {{- end }}
+    {{- end }}
+{{- end }}

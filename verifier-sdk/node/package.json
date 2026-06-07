@@ -1,0 +1,11 @@
+{
+  "name": "@forge/verifier",
+  "version": "1.0.0",
+  "description": "Forge license Verifier SDK (Node) — embed in consumer products",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": { ".": "./src/index.js" },
+  "bin": { "forge-verify": "src/cli.js" },
+  "engines": { "node": ">=18" },
+  "license": "UNLICENSED"
+}

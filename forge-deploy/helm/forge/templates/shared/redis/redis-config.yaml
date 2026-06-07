@@ -1,0 +1,12 @@
+{{- if or .Values.api.enabled .Values.edge.enabled .Values.worker.enabled .Values.scheduler.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "forge.fullname" . }}-shared-redis-config
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+data:
+  CACHE_TYPE: {{ include "forge.cache.type" . | quote }}
+  CACHE_HOST: {{ include "forge.cache.host" . | quote }}
+  CACHE_PORT: {{ include "forge.cache.port" . | toString | quote }}
+{{- end }}

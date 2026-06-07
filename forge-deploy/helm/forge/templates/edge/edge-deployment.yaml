@@ -1,0 +1,103 @@
+{{- if .Values.edge.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+    app: {{ template "forge.fullname" . }}-edge
+  name: {{ template "forge.fullname" . }}-edge
+spec:
+  replicas: {{ .Values.edge.replicas }}
+  selector:
+    matchLabels:
+{{- include "forge.selectorLabels" . | nindent 6 }}
+      app: {{ template "forge.fullname" . }}-edge
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/edge/edge-config.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/edge/edge-secret.yaml") . | sha256sum }}
+        checksum/shared-db-config: {{ include (print $.Template.BasePath "/shared/db/db-config.yaml") . | sha256sum }}
+        checksum/shared-redis-config: {{ include (print $.Template.BasePath "/shared/redis/redis-config.yaml") . | sha256sum }}
+        checksum/shared-storage-config: {{ include (print $.Template.BasePath "/shared/storage/storage-config.yaml") . | sha256sum }}
+      labels:
+{{- include "forge.selectorLabels" . | nindent 8 }}
+        app: {{ template "forge.fullname" . }}-edge
+{{- include "forge.podExtraLabels" . | nindent 8 }}
+    spec:
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.edge.serviceAccountName }}
+      serviceAccountName: {{ .Values.edge.serviceAccountName | quote }}
+      {{- end }}
+      {{- if include "forge.customCA.enabled" . }}
+      initContainers:
+{{ include "forge.customCA.initContainer" . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ template "forge.fullname" . }}-edge
+          image: {{ include "forge.componentImage" (dict "comp" .Values.edge "ctx" .) | quote }}
+          imagePullPolicy: {{ .Values.edge.image.pullPolicy }}
+          command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081"]
+          env:
+            {{- with .Values.edge.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- if include "forge.customCA.enabled" . }}
+            {{- include "forge.customCA.env" . | nindent 12 }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ template "forge.fullname" . }}-edge-config
+            - secretRef:
+                name: {{ template "forge.fullname" . }}-edge-secret
+            - configMapRef:
+                name: {{ template "forge.fullname" . }}-shared-db-config
+            - configMapRef:
+                name: {{ template "forge.fullname" . }}-shared-redis-config
+            - secretRef:
+                name: {{ template "forge.fullname" . }}-shared-redis-secret
+            {{- if .Values.persistence.enabled }}
+            - configMapRef:
+                name: {{ template "forge.fullname" . }}-shared-storage-config
+            - secretRef:
+                name: {{ template "forge.fullname" . }}-shared-storage-secret
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8081
+              protocol: TCP
+          {{- with .Values.edge.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.edge.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.edge.resources | nindent 12 }}
+          {{- if include "forge.customCA.enabled" . }}
+          volumeMounts:
+{{ include "forge.customCA.volumeMount" . | nindent 12 }}
+          {{- end }}
+      {{- with (.Values.edge.nodeSelector | default .Values.global.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.edge.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.edge.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if include "forge.customCA.enabled" . }}
+      volumes:
+{{ include "forge.customCA.volume" . | nindent 8 }}
+      {{- end }}
+{{- end }}

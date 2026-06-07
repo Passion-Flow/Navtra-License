@@ -1,0 +1,19 @@
+{{- if .Values.api.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "forge.fullname" . }}-api
+  labels:
+{{- include "forge.labels" . | nindent 4 }}
+    app: {{ template "forge.fullname" . }}-api
+spec:
+  type: ClusterIP
+  selector:
+{{- include "forge.selectorLabels" . | nindent 4 }}
+    app: {{ template "forge.fullname" . }}-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+{{- end }}
