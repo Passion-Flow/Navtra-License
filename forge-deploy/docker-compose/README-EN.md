@@ -115,7 +115,15 @@ blank and the mount points at `/dev/null` — completely harmless.
 docker compose ps
 docker compose logs forge-api | grep "Application startup complete"
 ```
-Open `http://<host-ip>` (or your domain) and sign in with the initial super-admin account.
+Open `http://<host-ip>` (or your domain) and sign in with the **initial super-admin**:
+
+- Email: `forge@navtra.ai`
+- Password: `forge@navtra.ai` (password = email — **change it on the Profile page right after first login**).
+
+> **Can't stay signed in over HTTP?** The session cookie is `Secure` by default (sent only over
+> HTTPS). For a plain-HTTP trial (IP, no certificate) you must set `SESSION_COOKIE_SECURE=false` in
+> `.env` (already the default in `.env.example`), otherwise the browser drops the cookie. Switch it
+> back to `true` once you serve the console over HTTPS.
 
 ---
 

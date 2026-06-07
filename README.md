@@ -77,7 +77,11 @@ docker compose up -d
 
 That brings up the full stack. The first start auto-creates the schema, runs migrations, creates the
 restricted edge database role, and seeds the super-admin. Open the console at `http://<host>` and sign
-in. To use an **external** database/cache instead, point `DATABASE_*` / `CACHE_*` in `.env` at your
+in with the seeded account — email `forge@navtra.ai`, password `forge@navtra.ai` (change it on the
+Profile page right after first login). Over plain HTTP keep `SESSION_COOKIE_SECURE=false` in `.env`
+(the default) so the session cookie is not dropped; set it `true` once you serve over HTTPS.
+
+To use an **external** database/cache instead, point `DATABASE_*` / `CACHE_*` in `.env` at your
 services and remove the bundled `postgres` / `redis` services — see
 [`forge-deploy/docker-compose/README-EN.md`](forge-deploy/docker-compose/README-EN.md).
 

@@ -121,7 +121,12 @@ docker compose ps
 docker compose logs forge-api | grep "Application startup complete"
 ```
 
-浏览器打开 `http://<本机IP>` 或你的域名，用初始超管账号登录。
+浏览器打开 `http://<本机IP>` 或你的域名，用**初始超管账号**登录：
+
+- 邮箱：`forge@navtra.ai`
+- 密码：`forge@navtra.ai`（密码 = 邮箱，**首次登录后请到「个人信息」页立即修改**）
+
+> **HTTP 访问登不进去？** 会话 Cookie 默认带 `Secure`（只在 HTTPS 下发送）。用纯 HTTP（IP 直连、无证书）时，`.env` 里必须 `SESSION_COOKIE_SECURE=false`（`.env.example` 已默认 false），否则浏览器丢弃 Cookie、登录无法保持。配好 HTTPS 后再改回 `true`。
 
 ---
 
