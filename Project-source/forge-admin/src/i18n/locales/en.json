@@ -229,7 +229,7 @@
     "disabled": "Disabled",
     "disable": "Disable",
     "enable": "Enable",
-    "reset": "Reset password",
+    "reset": "Reset",
     "email": "Email",
     "username": "Username",
     "pwhint": "The initial password defaults to the email; change it after login or via “Reset password”.",

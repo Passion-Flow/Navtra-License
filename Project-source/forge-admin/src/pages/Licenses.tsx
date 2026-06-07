@@ -41,7 +41,7 @@ export default function Licenses() {
       {isLoading ? <EmptyState text={t("common.loading")} /> : rows.length === 0 ? <EmptyState text={t("licenses.empty")} /> : (
         <Table
           head={[t("licenses.id"), t("licenses.customer"), t("licenses.product"), t("licenses.mode"), t("licenses.term"), t("licenses.status"), t("licenses.seats"), t("licenses.until"), ""]}
-          cols={["11%", "18%", "15%", "8%", "9%", "11%", "7%", "11%", "10%"]}
+          cols={["11%", "16%", "14%", "8%", "9%", "10%", "7%", "11%", "14%"]}
           align={["left", "left", "left", "left", "left", "left", "left", "left", "right"]}
         >
           {rows.map((l: License) => (
