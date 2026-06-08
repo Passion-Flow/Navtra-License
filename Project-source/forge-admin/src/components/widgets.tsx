@@ -168,6 +168,34 @@ export function Select({ label, value, onChange, options, placeholder }: {
   );
 }
 
+// Copy that also works over plain HTTP — navigator.clipboard is only available in a secure context
+// (HTTPS / localhost), so on an http:// deployment we fall back to a temporary-textarea execCommand.
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* fall through to the legacy path */
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.top = "0";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 export function CopyBox({ value }: { value: string }) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
@@ -178,7 +206,12 @@ export function CopyBox({ value }: { value: string }) {
       </div>
       <button
         type="button"
-        onClick={() => { navigator.clipboard.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+        onClick={async () => {
+          if (await copyText(value)) {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          }
+        }}
         className="shrink-0 rounded-md bg-zinc-900 px-3 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200"
       >
         {copied ? t("common.copied") : t("common.copy")}
