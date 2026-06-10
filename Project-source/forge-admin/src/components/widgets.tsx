@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { useI18n } from "@/i18n/useI18n";
-import { IconChevron } from "./icons";
+import { IconChevron, IconCheckMark, IconCopy } from "./icons";
 
 export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
   return (
@@ -200,21 +200,27 @@ export function CopyBox({ value }: { value: string }) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   return (
-    <div className="flex items-stretch gap-2">
-      <div className="flex-1 overflow-x-auto whitespace-pre-wrap rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 font-mono text-[13px] text-zinc-700 break-all dark:border-zinc-800 dark:bg-[#0e0e10] dark:text-zinc-300">
+    <div className="relative">
+      <div className="overflow-x-auto whitespace-pre-wrap rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 pr-11 font-mono text-[13px] text-zinc-700 break-all dark:border-zinc-800 dark:bg-[#0e0e10] dark:text-zinc-300">
         {value}
       </div>
       <button
         type="button"
+        title={copied ? t("common.copied") : t("common.copy")}
+        aria-label={t("common.copy")}
         onClick={async () => {
           if (await copyText(value)) {
             setCopied(true);
             setTimeout(() => setCopied(false), 1500);
           }
         }}
-        className="shrink-0 rounded-md bg-zinc-900 px-3 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200"
+        className={`absolute right-2 top-2 rounded-md border p-1.5 transition-colors ${
+          copied
+            ? "border-emerald-300 text-emerald-600 dark:border-emerald-800 dark:text-emerald-400"
+            : "border-zinc-200 bg-white text-zinc-400 hover:text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500 dark:hover:text-zinc-200"
+        }`}
       >
-        {copied ? t("common.copied") : t("common.copy")}
+        {copied ? <IconCheckMark size={15} /> : <IconCopy size={15} />}
       </button>
     </div>
   );
