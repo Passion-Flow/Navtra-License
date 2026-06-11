@@ -8,7 +8,8 @@
 forge-deploy/docker-compose/volumes/
 
 # ───── local dev tooling & internal docs (not part of the published product) ─────
-services/
+# anchored to repo root: must NOT match application source like forge-server/app/services/
+/services/
 Project-design/
 .agent.md
 .agent/

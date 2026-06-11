@@ -78,3 +78,37 @@ async def test_unknown_code_rejected(db, keys_ready):
     with pytest.raises(BizError) as e:
         await EdgeService(db).activate("00000000-0000-0000-0000-000000000000", "fpX", None, CTX)
     assert e.value.code in ("RESOURCE_NOT_FOUND",)
+
+
+async def test_deleted_license_locks_online_validate(db, keys_ready, product_and_customer):
+    """Fix A: soft-deleting a license must lock already-activated online clients at the next
+    validate renewal (LICENSE_REVOKED), not crash and not keep renewing leases."""
+    from app.repositories.license import LicenseRepository
+
+    p, c = product_and_customer
+    lic = await _issue_online(db, p, c, seat_limit=1)
+    edge = EdgeService(db)
+    res = await edge.activate(lic.online_code, "fpDel", None, CTX)
+    # renews fine while active
+    assert "lease_token" in await edge.validate(res["validation_token"], "fpDel", CTX)
+    # admin deletes the license (soft delete — NOT revoke)
+    await LicenseRepository(db).soft_delete(lic)
+    await db.flush()
+    # next renewal must lock cleanly
+    with pytest.raises(BizError) as e:
+        await EdgeService(db).validate(res["validation_token"], "fpDel", CTX)
+    assert e.value.code == "LICENSE_REVOKED"
+
+
+async def test_revoked_license_locks_online_validate(db, keys_ready, product_and_customer):
+    """Revoke must also lock an already-activated online client at validate (not only block
+    fresh activation)."""
+    p, c = product_and_customer
+    lic = await _issue_online(db, p, c, seat_limit=1)
+    edge = EdgeService(db)
+    res = await edge.activate(lic.online_code, "fpRev", None, CTX)
+    await IssuanceService(db).revoke(str(lic.id), "test", actor_id=None, ctx=CTX)
+    await db.flush()
+    with pytest.raises(BizError) as e:
+        await EdgeService(db).validate(res["validation_token"], "fpRev", CTX)
+    assert e.value.code == "LICENSE_REVOKED"

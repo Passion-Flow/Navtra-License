@@ -31,6 +31,25 @@ func trimSlash(s string) string {
 	return s
 }
 
+// definitiveLockCodes — the authority DEFINITIVELY rejected this ticket → lock immediately,
+// never ride the grace window. Grace only covers "no authoritative answer" (network/5xx).
+var definitiveLockCodes = map[string]bool{
+	"LICENSE_REVOKED": true, "LICENSE_EXPIRED": true, "LICENSE_BINDING_MISMATCH": true,
+	"LICENSE_LEASE_EXPIRED": true, "RESOURCE_NOT_FOUND": true,
+}
+
+// graceOrLock rides the signed grace window if still within it, else locks. Non-definitive only.
+func (c *OnlineClient) graceOrLock(reason string) Verdict {
+	if c.lastLease != nil {
+		if g := str(c.lastLease, "grace_until"); g != "" {
+			if t, perr := time.Parse(time.RFC3339, g); perr == nil && time.Now().UTC().Before(t) {
+				return Verdict{StatusActive, "grace", c.lastLease}
+			}
+		}
+	}
+	return Verdict{StatusLocked, reason, nil}
+}
+
 func (c *OnlineClient) post(path string, body map[string]any) (int, map[string]any, error) {
 	b, _ := json.Marshal(body)
 	resp, err := c.client.Post(c.base+path, "application/json", bytes.NewReader(b))
@@ -73,25 +92,30 @@ func (c *OnlineClient) Activate(onlineCode, fingerprint, clusterID string) Verdi
 	return Verdict{StatusLocked, reason, nil}
 }
 
+// Revalidate renews the lease. It distinguishes a DEFINITIVE authority rejection (revoked /
+// expired / deleted / binding-mismatch / lease-gone → lock now, no grace) from a NON-authoritative
+// outcome (connection failure / 5xx → ride the signed grace window).
 func (c *OnlineClient) Revalidate(fingerprint string) Verdict {
 	if c.token == "" {
 		return Verdict{StatusLocked, "not_activated", nil}
 	}
 	status, body, err := c.post("/edge/v1/validate",
 		map[string]any{"validation_token": c.token, "fingerprint": fingerprint})
-	if err == nil && status == 200 {
+	if err != nil {
+		return c.graceOrLock("network_error") // edge unreachable → grace
+	}
+	if status == 200 {
 		return c.accept(body)
 	}
-	if err == nil && str(body, "code") == "LICENSE_REVOKED" {
-		return Verdict{StatusRevoked, "revoked", nil}
+	code := str(body, "code")
+	if code == "LICENSE_REVOKED" {
+		return Verdict{StatusRevoked, "revoked", nil} // definitive → lock now
 	}
-	// network/edge error -> tolerate within the signed grace window
-	if c.lastLease != nil {
-		if g := str(c.lastLease, "grace_until"); g != "" {
-			if t, perr := time.Parse(time.RFC3339, g); perr == nil && time.Now().UTC().Before(t) {
-				return Verdict{StatusActive, "grace", c.lastLease}
-			}
-		}
+	if definitiveLockCodes[code] {
+		return Verdict{StatusLocked, code, nil} // definitive → lock now (no grace)
 	}
-	return Verdict{StatusLocked, "lease_expired", nil}
+	if code == "" {
+		code = "server_error"
+	}
+	return c.graceOrLock(code) // 5xx/unknown → grace
 }

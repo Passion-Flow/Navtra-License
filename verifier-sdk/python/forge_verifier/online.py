@@ -13,6 +13,14 @@ import urllib.request
 from forge_verifier import _token
 from forge_verifier.verifier import ACTIVE, LOCKED, REVOKED, Verdict
 
+# Authority DEFINITIVELY rejected this ticket → lock immediately, never ride the grace window.
+# Grace only covers "no authoritative answer" (connection failure / 5xx). A revoked/expired/
+# deleted/binding-mismatch/lease-gone ticket must NOT keep the product alive on a cached lease.
+_DEFINITIVE_LOCK_CODES = frozenset({
+    "LICENSE_REVOKED", "LICENSE_EXPIRED", "LICENSE_BINDING_MISMATCH",
+    "LICENSE_LEASE_EXPIRED", "RESOURCE_NOT_FOUND",
+})
+
 
 def _now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc)
@@ -54,10 +62,22 @@ class OnlineClient:
         self._validation_token = resp.get("validation_token")
         return Verdict(ACTIVE, "online", lease)
 
+    def _grace_or_lock(self, reason: str) -> Verdict:
+        """No authoritative answer (network down / 5xx): ride the signed grace window if still
+        within it, else lock. Used ONLY for non-definitive outcomes."""
+        if self._last_lease:
+            grace = _parse_dt(self._last_lease.get("grace_until"))
+            if grace and _now() < grace:
+                return Verdict(ACTIVE, "grace", self._last_lease)
+        return Verdict(LOCKED, reason)
+
     def activate(self, online_code: str, fingerprint: str, cluster_id: str | None = None) -> Verdict:
-        status, resp = self._post("/edge/v1/activate",
-                                  {"online_code": online_code, "fingerprint": fingerprint,
-                                   "cluster_id": cluster_id})
+        try:
+            status, resp = self._post("/edge/v1/activate",
+                                      {"online_code": online_code, "fingerprint": fingerprint,
+                                       "cluster_id": cluster_id})
+        except urllib.error.URLError:
+            return Verdict(LOCKED, "network_error")    # cannot activate offline
         if status == 200:
             return self._accept(resp)
         if resp.get("code") == "LICENSE_REVOKED":
@@ -65,18 +85,23 @@ class OnlineClient:
         return Verdict(LOCKED, resp.get("code", "activate_failed"))
 
     def revalidate(self, fingerprint: str) -> Verdict:
-        """Renew the lease; if the network is down, fall back to grace on the cached lease."""
+        """Renew the lease. Distinguish a DEFINITIVE authority rejection (revoked/expired/
+        deleted/binding-mismatch/lease-gone → lock now, no grace) from a NON-authoritative
+        outcome (connection failure / 5xx → ride the signed grace window)."""
         if not self._validation_token:
             return Verdict(LOCKED, "not_activated")
-        status, resp = self._post("/edge/v1/validate",
-                                  {"validation_token": self._validation_token, "fingerprint": fingerprint})
+        try:
+            status, resp = self._post(
+                "/edge/v1/validate",
+                {"validation_token": self._validation_token, "fingerprint": fingerprint},
+            )
+        except urllib.error.URLError:
+            return self._grace_or_lock("network_error")   # edge unreachable → grace
         if status == 200:
             return self._accept(resp)
-        if resp.get("code") == "LICENSE_REVOKED":
-            return Verdict(REVOKED, "revoked")
-        # network/edge error -> tolerate within the signed grace window (fail-closed after)
-        if self._last_lease:
-            grace = _parse_dt(self._last_lease.get("grace_until"))
-            if grace and _now() < grace:
-                return Verdict(ACTIVE, "grace", self._last_lease)
-        return Verdict(LOCKED, resp.get("code", "lease_expired"))
+        code = resp.get("code", "")
+        if code == "LICENSE_REVOKED":
+            return Verdict(REVOKED, "revoked")            # definitive → lock now
+        if code in _DEFINITIVE_LOCK_CODES:
+            return Verdict(LOCKED, code.lower())          # definitive → lock now (no grace)
+        return self._grace_or_lock(code or "server_error")  # 5xx/unknown → grace
