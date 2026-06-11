@@ -32,6 +32,9 @@ _s = get_settings()
 # Periodic cadences (seconds) — overridable via env without touching settings.py.
 _CRL_REFRESH_SECONDS = float(os.getenv("CRL_REFRESH_SECONDS", "21600"))   # 6h
 _LICENSE_SWEEP_SECONDS = float(os.getenv("LICENSE_SWEEP_SECONDS", "3600"))  # 1h
+# Anti-clone (design 07): reap bindings whose heartbeat is stale → free their seat (Keygen-style).
+_BINDING_REAP_SECONDS = float(os.getenv("BINDING_REAP_SECONDS", "120"))        # every 2m
+_HEARTBEAT_WINDOW_SECONDS = float(os.getenv("HEARTBEAT_WINDOW_SECONDS", "600"))  # 10m alive window
 
 celery = Celery(
     "forge",
@@ -51,6 +54,8 @@ celery.conf.update(
         "refresh-crl": {"task": "forge.refresh_crl", "schedule": _CRL_REFRESH_SECONDS},
         # Flip licenses past their active_until into the terminal "expired" status (dashboard truth).
         "sweep-expired-licenses": {"task": "forge.sweep_expired_licenses", "schedule": _LICENSE_SWEEP_SECONDS},
+        # Mark stale-heartbeat online bindings dead → release their seat (anti-clone seat hygiene).
+        "reap-dead-bindings": {"task": "forge.reap_dead_bindings", "schedule": _BINDING_REAP_SECONDS},
     },
 )
 
@@ -125,5 +130,49 @@ def sweep_expired_licenses() -> int:
         )
         await session.commit()
         return int(getattr(res, "rowcount", 0) or 0)
+
+    return asyncio.run(_with_session(_do))
+
+
+@celery.task(name="forge.reap_dead_bindings")
+def reap_dead_bindings() -> int:
+    """Mark online bindings whose heartbeat went stale as dead and free their seat. Only touches
+    bindings that HAVE heartbeated (last_heartbeat_at not null) — pre-upgrade / never-validated
+    bindings (null heartbeat) are left intact. Returns the number reaped."""
+
+    async def _do(session: Any) -> int:
+        from sqlalchemy import select, update
+
+        from app.models.binding import FingerprintBinding
+        from app.models.license import License
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        cutoff = now - datetime.timedelta(seconds=_HEARTBEAT_WINDOW_SECONDS)
+        dead = (await session.execute(
+            select(FingerprintBinding.id, FingerprintBinding.license_id).where(
+                FingerprintBinding.status == "active",
+                FingerprintBinding.deleted_at.is_(None),
+                FingerprintBinding.last_heartbeat_at.is_not(None),
+                FingerprintBinding.last_heartbeat_at < cutoff,
+            )
+        )).all()
+        if not dead:
+            return 0
+        ids = [r[0] for r in dead]
+        await session.execute(
+            update(FingerprintBinding).where(FingerprintBinding.id.in_(ids)).values(status="dead")
+        )
+        # decrement each license's denormalized seat_used by how many of its bindings died
+        per_license: dict[Any, int] = {}
+        for _bid, lid in dead:
+            per_license[lid] = per_license.get(lid, 0) + 1
+        for lid, n in per_license.items():
+            await session.execute(
+                update(License)
+                .where(License.id == lid, License.seat_used >= n)
+                .values(seat_used=License.seat_used - n)
+            )
+        await session.commit()
+        return len(ids)
 
     return asyncio.run(_with_session(_do))

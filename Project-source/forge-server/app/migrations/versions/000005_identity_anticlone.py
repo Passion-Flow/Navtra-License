@@ -23,6 +23,12 @@ _JSON = JSONB().with_variant(JSON(), "mysql", "oracle")
 
 
 def upgrade() -> None:
+    # allow the "dead" status (heartbeat-reaped bindings) in the CHECK constraint
+    op.drop_constraint("ck_binding_status", "fingerprint_bindings", type_="check")
+    op.create_check_constraint(
+        "ck_binding_status", "fingerprint_bindings",
+        "status IN ('active', 'released', 'blocked', 'dead')",
+    )
     op.add_column("fingerprint_bindings", sa.Column("install_id", sa.String(64), nullable=True))
     op.add_column("fingerprint_bindings", sa.Column("signals", _JSON, nullable=True))
     op.add_column("fingerprint_bindings", sa.Column("deployment_uid", sa.String(128), nullable=True))
@@ -53,3 +59,8 @@ def downgrade() -> None:
     op.drop_column("fingerprint_bindings", "deployment_uid")
     op.drop_column("fingerprint_bindings", "signals")
     op.drop_column("fingerprint_bindings", "install_id")
+    op.drop_constraint("ck_binding_status", "fingerprint_bindings", type_="check")
+    op.create_check_constraint(
+        "ck_binding_status", "fingerprint_bindings",
+        "status IN ('active', 'released', 'blocked')",
+    )
