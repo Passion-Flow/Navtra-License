@@ -1,0 +1,137 @@
+# OpenAPI 设计期 stub —— Forge
+# 实现期由 FastAPI 自动生成两份：/admin-api/v1/openapi.json + /edge/v1/openapi.json
+# 本文件仅锁关键契约，非完整 spec。
+openapi: 3.1.0
+info:
+  title: Forge License Authority API
+  version: 1.0.0
+  description: 厂商专用 License 签发与校验。admin-api(内网) + edge(公网) 两套。
+servers:
+  - url: https://forge.internal/admin-api/v1   # 管理后端（内网）
+  - url: https://forge.navtra.ai/edge/v1       # 公网校验边缘
+
+components:
+  securitySchemes:
+    sessionCookie: { type: apiKey, in: cookie, name: forge_admin_session }
+    apiKey: { type: apiKey, in: header, name: X-Forge-API-Key }
+    validationToken: { type: http, scheme: bearer }
+  schemas:
+    Error:
+      type: object
+      required: [code, request_id]
+      properties:
+        code: { type: string, example: LICENSE_SEAT_EXCEEDED }
+        message: { type: string }
+        details: { type: object }
+        request_id: { type: string }
+    IssueOnlineRequest:
+      type: object
+      required: [customer_id, product_id, term_preset]
+      additionalProperties: false
+      properties:
+        customer_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        term_preset: { type: string, enum: [1m,3m,6m,1y,3y,5y,perpetual] }
+        subscription: { type: string, default: Enterprise }
+        quotas: { type: object }
+        features: { type: array, items: { type: string } }
+        seat_limit: { type: integer, minimum: 1, default: 1 }
+    IssueOfflineRequest:
+      type: object
+      required: [customer_id, product_id, deployment_id, term_preset]
+      additionalProperties: false
+      properties:
+        customer_id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        deployment_id: { type: string, description: 客户产品采集的硬件指纹 }
+        term_preset: { type: string, enum: [1m,3m,6m,1y,3y,5y,perpetual] }
+        subscription: { type: string }
+        quotas: { type: object }
+        features: { type: array, items: { type: string } }
+    ActivateRequest:
+      type: object
+      required: [online_code, fingerprint, cluster_id]
+      additionalProperties: false
+      properties:
+        online_code: { type: string }
+        fingerprint: { type: string }
+        cluster_id: { type: string }
+    ValidateRequest:
+      type: object
+      required: [validation_token, fingerprint]
+      additionalProperties: false
+      properties:
+        validation_token: { type: string }
+        fingerprint: { type: string }
+
+paths:
+  # ---------- 管理后端 ----------
+  /licenses:issue-online:
+    post:
+      tags: [issuance]
+      security: [{ sessionCookie: [] }, { apiKey: [] }]
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/IssueOnlineRequest' } } }
+      responses:
+        '201': { description: 已签发短码 }
+        '400': { description: ISSUE_INVALID_TERM, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /licenses:issue-offline:
+    post:
+      tags: [issuance]
+      security: [{ sessionCookie: [] }, { apiKey: [] }]
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/IssueOfflineRequest' } } }
+      responses:
+        '201': { description: 已签发 .forge(base64) }
+        '202': { description: 异步签发 task_id }
+  /licenses/{id}:revoke:
+    post:
+      tags: [licenses]
+      security: [{ sessionCookie: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: 已吊销 } }
+  /audit-logs:
+    get:
+      tags: [audit]
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: resource_type, in: query, schema: { type: string } }
+        - { name: action, in: query, schema: { type: string } }
+      responses: { '200': { description: 审计列表(cursor 分页) } }
+
+  # ---------- 公网边缘 ----------
+  /activate:
+    post:
+      tags: [edge]
+      description: 在线激活，首次绑定硬件指纹，返回 validation_token + 租约
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ActivateRequest' } } }
+      responses:
+        '200': { description: 激活成功 + 租约 }
+        '403': { description: REVOKED/EXPIRED/SEAT_EXCEEDED/BINDING_MISMATCH, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: RESOURCE_NOT_FOUND }
+  /validate:
+    post:
+      tags: [edge]
+      description: 续租约（热路径 Redis）
+      security: [{ validationToken: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ValidateRequest' } } }
+      responses:
+        '200': { description: 租约续期 }
+        '403': { description: REVOKED/LEASE_EXPIRED/BINDING_MISMATCH }
+  /public-key:
+    get:
+      tags: [edge]
+      description: 返回厂商公钥 + edge 租约公钥（只读，供产品校验）
+      responses: { '200': { description: 公钥 } }
