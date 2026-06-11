@@ -27,14 +27,19 @@ async def activate(body: ActivateRequest, request: Request,
     rl = RateLimiter()
     await rl.hit(f"edge_act_ip:{_ip(request)}", limit=20, window=60)
     await rl.hit(f"edge_act_code:{body.online_code}", limit=10, window=60)
-    return await EdgeService(db).activate(body.online_code, body.fingerprint, body.cluster_id, audit_ctx(request))
+    return await EdgeService(db).activate(
+        body.online_code, body.fingerprint, body.cluster_id, audit_ctx(request),
+        install_id=body.install_id, signals=body.signals, deployment_uid=body.deployment_uid,
+    )
 
 
 @router.post("/validate")
 async def validate(body: ValidateRequest, request: Request,
                    db: AsyncSession = Depends(get_db_session)) -> dict:
     await RateLimiter().hit(f"edge_val:{body.validation_token[:16]}", limit=60, window=60)
-    return await EdgeService(db).validate(body.validation_token, body.fingerprint, audit_ctx(request))
+    return await EdgeService(db).validate(
+        body.validation_token, body.fingerprint, audit_ctx(request), install_id=body.install_id,
+    )
 
 
 @router.get("/crl")

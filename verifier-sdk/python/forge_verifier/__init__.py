@@ -11,19 +11,34 @@
 
 from __future__ import annotations
 
+import os
+
 from forge_verifier import keys
-from forge_verifier.fingerprint import deployment_fingerprint
+from forge_verifier.fingerprint import (
+    collect_signals,
+    deployment_fingerprint,
+    deployment_uid,
+    ensure_install_id,
+)
 from forge_verifier.online import OnlineClient
 from forge_verifier.verifier import Verdict, verify_offline
 
 __all__ = ["ForgeVerifier", "Verdict", "verify_offline", "OnlineClient", "deployment_fingerprint"]
 
+_DEFAULT_INSTALL_ID_PATH = os.path.join(
+    os.path.expanduser("~"), ".config", "forge", "install_id"
+)
+
 
 class ForgeVerifier:
-    def __init__(self, edge_url: str | None = None) -> None:
+    def __init__(self, edge_url: str | None = None, *, install_id_path: str | None = None) -> None:
         self.master_pub = keys.master_public_pem()
         self.edge_pub = keys.edge_lease_public_pem()
         self.fingerprint = deployment_fingerprint()
+        # 反克隆身份（design 07）：注入 UID（容器/集群权威）、多信号向量、首激活随机 install_id。
+        self.deployment_uid = deployment_uid()
+        self.signals = collect_signals()
+        self.install_id = ensure_install_id(install_id_path or _DEFAULT_INSTALL_ID_PATH)
         self.online = OnlineClient(edge_url, self.edge_pub) if edge_url else None
 
     def verify_offline(self, blob: str, revoked_license_ids: set[str] | None = None) -> Verdict:
@@ -45,9 +60,12 @@ class ForgeVerifier:
     def activate_online(self, online_code: str, cluster_id: str | None = None) -> Verdict:
         if not self.online:
             raise RuntimeError("edge_url not configured")
-        return self.online.activate(online_code, self.fingerprint, cluster_id)
+        return self.online.activate(
+            online_code, self.fingerprint, cluster_id,
+            install_id=self.install_id, signals=self.signals, deployment_uid=self.deployment_uid,
+        )
 
     def revalidate(self) -> Verdict:
         if not self.online:
             raise RuntimeError("edge_url not configured")
-        return self.online.revalidate(self.fingerprint)
+        return self.online.revalidate(self.fingerprint, install_id=self.install_id)

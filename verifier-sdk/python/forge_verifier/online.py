@@ -71,11 +71,19 @@ class OnlineClient:
                 return Verdict(ACTIVE, "grace", self._last_lease)
         return Verdict(LOCKED, reason)
 
-    def activate(self, online_code: str, fingerprint: str, cluster_id: str | None = None) -> Verdict:
+    def activate(self, online_code: str, fingerprint: str, cluster_id: str | None = None,
+                 *, install_id: str | None = None, signals: dict | None = None,
+                 deployment_uid: str | None = None) -> Verdict:
+        body = {"online_code": online_code, "fingerprint": fingerprint, "cluster_id": cluster_id}
+        # 反克隆身份字段（design 07）：仅在有值时附带，旧 edge 收不到也不影响（新 edge 先行部署）。
+        if install_id:
+            body["install_id"] = install_id
+        if signals:
+            body["signals"] = signals
+        if deployment_uid:
+            body["deployment_uid"] = deployment_uid
         try:
-            status, resp = self._post("/edge/v1/activate",
-                                      {"online_code": online_code, "fingerprint": fingerprint,
-                                       "cluster_id": cluster_id})
+            status, resp = self._post("/edge/v1/activate", body)
         except urllib.error.URLError:
             return Verdict(LOCKED, "network_error")    # cannot activate offline
         if status == 200:
@@ -84,17 +92,17 @@ class OnlineClient:
             return Verdict(REVOKED, "revoked")
         return Verdict(LOCKED, resp.get("code", "activate_failed"))
 
-    def revalidate(self, fingerprint: str) -> Verdict:
+    def revalidate(self, fingerprint: str, *, install_id: str | None = None) -> Verdict:
         """Renew the lease. Distinguish a DEFINITIVE authority rejection (revoked/expired/
         deleted/binding-mismatch/lease-gone → lock now, no grace) from a NON-authoritative
         outcome (connection failure / 5xx → ride the signed grace window)."""
         if not self._validation_token:
             return Verdict(LOCKED, "not_activated")
+        body = {"validation_token": self._validation_token, "fingerprint": fingerprint}
+        if install_id:
+            body["install_id"] = install_id
         try:
-            status, resp = self._post(
-                "/edge/v1/validate",
-                {"validation_token": self._validation_token, "fingerprint": fingerprint},
-            )
+            status, resp = self._post("/edge/v1/validate", body)
         except urllib.error.URLError:
             return self._grace_or_lock("network_error")   # edge unreachable → grace
         if status == 200:

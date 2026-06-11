@@ -22,7 +22,7 @@ from app.core import crypto
 from app.core.errors import BizError
 from app.licensing import forge_file
 from app.licensing.keys import KeyManager
-from app.models.binding import FingerprintBinding, Lease
+from app.models.binding import CloneAlert, FingerprintBinding, Lease
 from app.models.revocation import Revocation
 from app.repositories.license import LicenseRepository
 from app.services.audit_service import AuditService
@@ -35,6 +35,9 @@ def _now() -> datetime.datetime:
 
 def _sha(s: str) -> str:
     return hashlib.sha256(s.encode()).hexdigest()
+
+
+_FUZZY_MIN = 2  # 信号向量命中 ≥ 此数 → 判为同机硬件漂移（换盘/换网卡），复用既有 binding 不新占 seat
 
 
 class EdgeService:
@@ -103,7 +106,36 @@ class EdgeService:
                         "active_until": lease_payload["active_until"]},
         }
 
-    async def activate(self, online_code: str, fingerprint: str, cluster_id: str | None, ctx: dict) -> dict:
+    async def _active_bindings(self, license_db_id) -> list:  # noqa: ANN001
+        return list((await self.db.execute(
+            select(FingerprintBinding).where(
+                FingerprintBinding.license_id == license_db_id,
+                FingerprintBinding.status == "active",
+                FingerprintBinding.deleted_at.is_(None))
+        )).scalars().all())
+
+    def _match_binding(self, bindings, fingerprint, deployment_uid, signals):  # noqa: ANN001
+        """身份匹配（design 07）：deployment_uid 优先（容器/集群权威身份）；否则指纹精确；
+        都不中再用多信号模糊匹配（同机换盘/换网卡漂移）→ 复用既有 binding，不新占 seat。"""
+        if deployment_uid:
+            for b in bindings:
+                if b.deployment_uid == deployment_uid:
+                    return b
+            return None
+        for b in bindings:
+            if b.deployment_uid is None and b.fingerprint == fingerprint:
+                return b
+        if signals:
+            for b in bindings:
+                if b.deployment_uid is None and b.signals:
+                    overlap = sum(1 for k, v in signals.items() if b.signals.get(k) == v)
+                    if overlap >= _FUZZY_MIN:
+                        return b
+        return None
+
+    async def activate(self, online_code: str, fingerprint: str, cluster_id: str | None, ctx: dict,
+                       *, install_id: str | None = None, signals: dict | None = None,
+                       deployment_uid: str | None = None) -> dict:
         lic = await self.licenses.get_by_online_code(online_code)
         if not lic or lic.mode != "online":
             raise BizError("RESOURCE_NOT_FOUND", {"resource": "online_code"})
@@ -123,34 +155,47 @@ class EdgeService:
         if not got:
             raise BizError("LICENSE_SEAT_LOCK_BUSY")
         try:
-            existing = (await self.db.execute(
-                select(FingerprintBinding).where(
-                    FingerprintBinding.license_id == lic.id,
-                    FingerprintBinding.fingerprint == fingerprint,
-                    FingerprintBinding.deleted_at.is_(None))
-            )).scalar_one_or_none()
-            if existing is None:
-                active_count = len((await self.db.execute(
-                    select(FingerprintBinding).where(
-                        FingerprintBinding.license_id == lic.id,
-                        FingerprintBinding.status == "active",
-                        FingerprintBinding.deleted_at.is_(None))
-                )).scalars().all())
+            bindings = await self._active_bindings(lic.id)
+            existing = self._match_binding(bindings, fingerprint, deployment_uid, signals)
+            if existing is not None:
+                # install_id 双锁：激活介质被复制到"重新生成了不同 install_id"的装机 → 拒（反克隆）。
+                # 旧绑定 install_id 为 null（升级前）则容忍并回填；旧 SDK 不发 install_id 也容忍。
+                if existing.install_id and install_id and existing.install_id != install_id:
+                    self.audit.log(action="license.install_id_mismatch", result="failure",
+                                   resource_type="license", resource_id=str(lic.license_id),
+                                   reason="INSTALL_ID_MISMATCH", **ctx)
+                    await self.db.commit()
+                    raise BizError("LICENSE_BINDING_MISMATCH")
+                existing.install_id = existing.install_id or install_id
+                existing.signals = signals or existing.signals
+                existing.deployment_uid = deployment_uid or existing.deployment_uid
+                existing.fingerprint = fingerprint
+                existing.last_heartbeat_at = _now()
+            else:
+                active_count = len(bindings)
                 if active_count >= lic.seat_limit:
+                    # 超 seat 的新身份 = 疑似克隆/共享 → 告警 + 拒新（决策：告警+超seat拒新）
+                    self.db.add(CloneAlert(
+                        license_id=lic.id, alive_identities=active_count + 1,
+                        seat_limit=lic.seat_limit,
+                        sample={"attempted_fingerprint": fingerprint[:12],
+                                "deployment_uid": deployment_uid, "ip": ctx.get("ip")}))
                     self.audit.log(action="license.seat_exceeded", result="failure",
                                    resource_type="license", resource_id=str(lic.license_id),
                                    reason="LICENSE_SEAT_EXCEEDED",
                                    metadata={"attempted_fingerprint": fingerprint[:8] + "…"}, **ctx)
                     await self.db.commit()
                     raise BizError("LICENSE_SEAT_EXCEEDED")
-                existing = FingerprintBinding(license_id=lic.id, fingerprint=fingerprint,
-                                              cluster_id=cluster_id, status="active")
+                existing = FingerprintBinding(
+                    license_id=lic.id, fingerprint=fingerprint, cluster_id=cluster_id,
+                    status="active", install_id=install_id, signals=signals,
+                    deployment_uid=deployment_uid, last_heartbeat_at=_now())
                 self.db.add(existing)
                 lic.seat_used += 1
                 if lic.status == "issued":
                     lic.status = "active"
                     lic.activated_at = _now()
-                await self.db.flush()
+            await self.db.flush()
         finally:
             if got:
                 await self.lock_redis.delete(lock_key)
@@ -158,11 +203,13 @@ class EdgeService:
         result = await self._mint_lease(lic, existing)
         self.audit.log(action="license.activated", result="success",
                        resource_type="license", resource_id=str(lic.license_id),
-                       metadata={"fingerprint": fingerprint[:8] + "…", "cluster_id": cluster_id}, **ctx)
+                       metadata={"fingerprint": fingerprint[:8] + "…", "cluster_id": cluster_id,
+                                 "deployment_uid": deployment_uid}, **ctx)
         await self.db.commit()
         return result
 
-    async def validate(self, validation_token: str, fingerprint: str, ctx: dict) -> dict:
+    async def validate(self, validation_token: str, fingerprint: str, ctx: dict,
+                       *, install_id: str | None = None) -> dict:
         th = _sha(validation_token)
         cached = await self.redis.get(f"forge:lease:{th}")
         lease_row = (await self.db.execute(
@@ -174,8 +221,16 @@ class EdgeService:
         binding = (await self.db.execute(
             select(FingerprintBinding).where(FingerprintBinding.id == binding_id)
         )).scalar_one_or_none()
-        if not binding or binding.fingerprint != fingerprint or binding.status != "active":
+        if not binding or binding.status != "active":
             raise BizError("LICENSE_BINDING_MISMATCH")
+        # 身份校验：硬件绑定要求指纹相等（防拷贝）；deployment_uid 绑定（容器/集群）不钉硬件指纹
+        # ——多 pod 指纹各异，validation_token 的持有即身份证明。
+        if binding.deployment_uid is None and binding.fingerprint != fingerprint:
+            raise BizError("LICENSE_BINDING_MISMATCH")
+        # install_id 双锁：lease+token 被复制到 install_id 不同的装机 → 拒（旧绑定/旧 SDK 容忍 null）
+        if binding.install_id and install_id and binding.install_id != install_id:
+            raise BizError("LICENSE_BINDING_MISMATCH")
+        binding.last_heartbeat_at = _now()
         # include_deleted: load even a soft-deleted license so _assert_valid_window can lock it
         # (LICENSE_REVOKED). Without include_deleted, get() returns None for deleted licenses and
         # the renewal would crash instead of cleanly locking the client.
