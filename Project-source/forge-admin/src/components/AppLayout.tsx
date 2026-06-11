@@ -8,7 +8,7 @@ import { Logo } from "./Logo";
 import { Dropdown, DropdownItem } from "./Dropdown";
 import {
   IconAudit, IconChevron, IconCustomer, IconDashboard, IconIssue, IconLicense,
-  IconLogout, IconProduct, IconSettings, IconUser,
+  IconLogout, IconProduct, IconRevoked, IconSettings, IconUser,
 } from "./icons";
 
 const NAV: { key: string; to: string; perm?: string; icon: (p: { size?: number }) => ReactNode }[] = [
@@ -17,6 +17,7 @@ const NAV: { key: string; to: string; perm?: string; icon: (p: { size?: number }
   { key: "customers", to: "customers", perm: "platform.customer.read", icon: IconCustomer },
   { key: "issue", to: "issue", perm: "platform.license.issue", icon: IconIssue },
   { key: "licenses", to: "licenses", perm: "platform.license.read", icon: IconLicense },
+  { key: "security", to: "security", perm: "platform.license.read", icon: IconRevoked },
   { key: "audit", to: "audit-logs", perm: "platform.audit.read", icon: IconAudit },
   { key: "users", to: "users", perm: "platform.user.read", icon: IconUser },
   { key: "settings", to: "settings", perm: "system.key.read", icon: IconSettings },

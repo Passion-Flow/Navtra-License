@@ -61,4 +61,31 @@ export const forge = {
   listKeys: () => api.get<ListResp<SigningKey>>("/signing-keys"),
   exportPublic: (keyId: string) => api.get<{ data: { public_key: string } }>(`/signing-keys/${keyId}:export-public`),
   generateCrl: () => api.post<{ data: { version: number; entry_count: number } }>("/crl:generate"),
+  // anti-clone (design 07): clone alerts + per-license online bindings
+  listCloneAlerts: (status = "") =>
+    api.get<{ data: CloneAlert[] }>(`/clone-alerts${status ? `?status=${status}` : ""}`),
+  resolveCloneAlert: (id: string) => api.post(`/clone-alerts/${id}:resolve`, {}),
+  listBindings: (licenseId: string) => api.get<{ data: Binding[] }>(`/licenses/${licenseId}/bindings`),
 };
+
+export interface CloneAlert {
+  id: string;
+  license_id: string;
+  detected_at: string | null;
+  alive_identities: number;
+  seat_limit: number;
+  sample: Record<string, unknown> | null;
+  status: string;
+}
+
+export interface Binding {
+  id: string;
+  fingerprint: string | null;
+  deployment_uid: string | null;
+  install_id: string | null;
+  cluster_id: string | null;
+  status: string;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  last_heartbeat_at: string | null;
+}

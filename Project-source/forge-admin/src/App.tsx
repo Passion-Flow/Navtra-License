@@ -18,6 +18,7 @@ import Profile from "@/pages/Profile";
 import Issue from "@/pages/Issue";
 import Licenses from "@/pages/Licenses";
 import AuditLogs from "@/pages/AuditLogs";
+import Security from "@/pages/Security";
 import Settings from "@/pages/Settings";
 
 function detectLang(): string {
@@ -54,6 +55,7 @@ export default function App() {
                     <Route path="users" element={<Users />} />
                     <Route path="issue" element={<Issue />} />
                     <Route path="licenses" element={<Licenses />} />
+                    <Route path="security" element={<Security />} />
                     <Route path="audit-logs" element={<AuditLogs />} />
                     <Route path="settings" element={<Settings />} />
                   </Route>

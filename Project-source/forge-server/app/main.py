@@ -50,10 +50,10 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
 
     if settings.APP_ROLE == "api":
-        from app.api.admin.v1 import (audit, auth, crl, customers, licenses, me, products,
-                                      settings, users)
+        from app.api.admin.v1 import (audit, auth, clone_alerts, crl, customers, licenses, me,
+                                      products, settings, users)
         for r in (auth.router, me.router, products.router, customers.router, licenses.router,
-                  crl.router, audit.router, settings.router, users.router):
+                  crl.router, audit.router, settings.router, users.router, clone_alerts.router):
             app.include_router(r, prefix="/admin-api/v1")
     elif settings.APP_ROLE == "edge":
         from app.api.edge.v1 import routes as edge_routes
