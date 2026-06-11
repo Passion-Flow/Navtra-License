@@ -33,10 +33,15 @@ export class OnlineClient {
     return new Verdict(Status.ACTIVE, "online", payload);
   }
 
-  async activate(onlineCode, fingerprint, clusterId = null) {
+  async activate(onlineCode, fingerprint, clusterId = null, { installId, signals, deploymentUid } = {}) {
+    const reqBody = { online_code: onlineCode, fingerprint, cluster_id: clusterId };
+    // 反克隆身份字段（design 07）：仅在有值时附带；新 edge 先行部署，旧 edge 收不到也不影响。
+    if (installId) reqBody.install_id = installId;
+    if (signals && Object.keys(signals).length) reqBody.signals = signals;
+    if (deploymentUid) reqBody.deployment_uid = deploymentUid;
     let r;
     try {
-      r = await this._post("/edge/v1/activate", { online_code: onlineCode, fingerprint, cluster_id: clusterId });
+      r = await this._post("/edge/v1/activate", reqBody);
     } catch {
       return new Verdict(Status.LOCKED, "network");
     }
@@ -45,11 +50,13 @@ export class OnlineClient {
     return new Verdict(Status.LOCKED, r.body?.code || "activate_failed");
   }
 
-  async revalidate(fingerprint) {
+  async revalidate(fingerprint, { installId } = {}) {
     if (!this._validationToken) return new Verdict(Status.LOCKED, "not_activated");
+    const reqBody = { validation_token: this._validationToken, fingerprint };
+    if (installId) reqBody.install_id = installId;
     let r;
     try {
-      r = await this._post("/edge/v1/validate", { validation_token: this._validationToken, fingerprint });
+      r = await this._post("/edge/v1/validate", reqBody);
     } catch {
       r = null;
     }

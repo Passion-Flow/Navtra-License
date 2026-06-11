@@ -1,11 +1,13 @@
 package forge
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -62,4 +64,106 @@ func rawMachineID() string {
 func DeploymentFingerprint() string {
 	sum := sha256.Sum256([]byte(rawMachineID()))
 	return hex.EncodeToString(sum[:])
+}
+
+// ── anti-clone identity (design 07) — additive; DeploymentFingerprint() value unchanged ──
+
+func inContainer() bool {
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		return true
+	}
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	if b, err := os.ReadFile("/proc/1/cgroup"); err == nil {
+		s := string(b)
+		if strings.Contains(s, "docker") || strings.Contains(s, "kubepods") || strings.Contains(s, "containerd") {
+			return true
+		}
+	}
+	return false
+}
+
+// DeploymentUID returns an injected stable uid, authoritative ONLY in dev or inside a
+// container/K8s (bare metal ignores it so a copier cannot spoof the bound id via env).
+func DeploymentUID() string {
+	uid := os.Getenv("FORGE_DEPLOYMENT_UID")
+	if uid == "" {
+		return ""
+	}
+	if os.Getenv("FORGE_SDK_DEV") != "" || inContainer() {
+		return uid
+	}
+	return ""
+}
+
+func hashSig(v string) string {
+	if v == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(v))
+	return hex.EncodeToString(sum[:])
+}
+
+func readTrim(path string) string {
+	if b, err := os.ReadFile(path); err == nil {
+		return strings.TrimSpace(string(b))
+	}
+	return ""
+}
+
+func machineIDRaw() string {
+	switch runtime.GOOS {
+	case "linux":
+		for _, p := range []string{"/etc/machine-id", "/var/lib/dbus/machine-id"} {
+			if v := readTrim(p); v != "" {
+				return v
+			}
+		}
+	case "darwin":
+		if out, err := exec.Command("ioreg", "-rd1", "-c", "IOPlatformExpertDevice").Output(); err == nil {
+			if m := regexp.MustCompile(`IOPlatformUUID"?\s*=\s*"([^"]+)"`).FindSubmatch(out); m != nil {
+				return string(m[1])
+			}
+		}
+	}
+	return ""
+}
+
+// CollectSignals returns the multi-signal vector (each value hashed) for server-side fuzzy
+// match & clone detection. Missing signals are omitted, never fabricated.
+func CollectSignals() map[string]string {
+	raw := map[string]string{
+		"dmi_product_uuid": readTrim("/sys/class/dmi/id/product_uuid"),
+		"board_serial":     readTrim("/sys/class/dmi/id/board_serial"),
+		"disk_serial":      readTrim("/sys/class/dmi/id/product_serial"),
+		"cpu_sig":          runtime.GOARCH + "|" + runtime.GOOS,
+		"machine_id":       machineIDRaw(),
+		"mac":              firstMAC(),
+	}
+	out := map[string]string{}
+	for k, v := range raw {
+		if v != "" && v != "no-mac" {
+			out[k] = hashSig(v)
+		}
+	}
+	return out
+}
+
+// EnsureInstallID returns a first-activation random id persisted 0600 at path. Stable across
+// restarts; regenerated only when the file is gone (reinstall / fresh deploy = new identity).
+func EnsureInstallID(path string) string {
+	if v := readTrim(path); len(v) >= 16 {
+		return v
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return ""
+	}
+	id := hex.EncodeToString(buf)
+	if dir := filepath.Dir(path); dir != "" {
+		_ = os.MkdirAll(dir, 0o700)
+	}
+	_ = os.WriteFile(path, []byte(id), 0o600)
+	return id
 }

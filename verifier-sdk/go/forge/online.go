@@ -73,9 +73,19 @@ func (c *OnlineClient) accept(resp map[string]any) Verdict {
 	return Verdict{StatusActive, "online", lease}
 }
 
-func (c *OnlineClient) Activate(onlineCode, fingerprint, clusterID string) Verdict {
-	status, body, err := c.post("/edge/v1/activate",
-		map[string]any{"online_code": onlineCode, "fingerprint": fingerprint, "cluster_id": clusterID})
+func (c *OnlineClient) Activate(onlineCode, fingerprint, clusterID, installID, deploymentUID string, signals map[string]string) Verdict {
+	req := map[string]any{"online_code": onlineCode, "fingerprint": fingerprint, "cluster_id": clusterID}
+	// 反克隆身份字段（design 07）：仅在有值时附带；新 edge 先行部署，旧 edge 收不到也不影响。
+	if installID != "" {
+		req["install_id"] = installID
+	}
+	if deploymentUID != "" {
+		req["deployment_uid"] = deploymentUID
+	}
+	if len(signals) > 0 {
+		req["signals"] = signals
+	}
+	status, body, err := c.post("/edge/v1/activate", req)
 	if err != nil {
 		return Verdict{StatusLocked, "network", nil}
 	}
@@ -95,12 +105,15 @@ func (c *OnlineClient) Activate(onlineCode, fingerprint, clusterID string) Verdi
 // Revalidate renews the lease. It distinguishes a DEFINITIVE authority rejection (revoked /
 // expired / deleted / binding-mismatch / lease-gone → lock now, no grace) from a NON-authoritative
 // outcome (connection failure / 5xx → ride the signed grace window).
-func (c *OnlineClient) Revalidate(fingerprint string) Verdict {
+func (c *OnlineClient) Revalidate(fingerprint, installID string) Verdict {
 	if c.token == "" {
 		return Verdict{StatusLocked, "not_activated", nil}
 	}
-	status, body, err := c.post("/edge/v1/validate",
-		map[string]any{"validation_token": c.token, "fingerprint": fingerprint})
+	req := map[string]any{"validation_token": c.token, "fingerprint": fingerprint}
+	if installID != "" {
+		req["install_id"] = installID
+	}
+	status, body, err := c.post("/edge/v1/validate", req)
 	if err != nil {
 		return c.graceOrLock("network_error") // edge unreachable → grace
 	}

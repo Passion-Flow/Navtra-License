@@ -31,7 +31,7 @@ func withGrace(c *OnlineClient, until time.Time) {
 func TestRevalidate_RevokedLocksDespiteGrace(t *testing.T) {
 	c := stubEdge(t, 403, map[string]any{"code": "LICENSE_REVOKED"})
 	withGrace(c, time.Now().Add(24*time.Hour)) // plenty of grace left
-	v := c.Revalidate("fp")
+	v := c.Revalidate("fp", "")
 	if v.Status != StatusRevoked {
 		t.Fatalf("revoked must lock now (no grace), got %s/%s", v.Status, v.Reason)
 	}
@@ -41,7 +41,7 @@ func TestRevalidate_DefinitiveCodeLocksDespiteGrace(t *testing.T) {
 	for _, code := range []string{"LICENSE_EXPIRED", "LICENSE_BINDING_MISMATCH", "LICENSE_LEASE_EXPIRED", "RESOURCE_NOT_FOUND"} {
 		c := stubEdge(t, 409, map[string]any{"code": code})
 		withGrace(c, time.Now().Add(24*time.Hour))
-		v := c.Revalidate("fp")
+		v := c.Revalidate("fp", "")
 		if v.Unlocked() {
 			t.Fatalf("%s must lock now (no grace), got %s/%s", code, v.Status, v.Reason)
 		}
@@ -53,7 +53,7 @@ func TestRevalidate_DefinitiveCodeLocksDespiteGrace(t *testing.T) {
 func TestRevalidate_ServerErrorRidesGrace(t *testing.T) {
 	c := stubEdge(t, 500, map[string]any{"code": "SYSTEM_INTERNAL_ERROR"})
 	withGrace(c, time.Now().Add(1*time.Hour))
-	v := c.Revalidate("fp")
+	v := c.Revalidate("fp", "")
 	if v.Status != StatusActive || v.Reason != "grace" {
 		t.Fatalf("5xx within grace must ride grace, got %s/%s", v.Status, v.Reason)
 	}
@@ -66,7 +66,7 @@ func TestRevalidate_NetworkErrorRidesGrace(t *testing.T) {
 	c := NewOnlineClient(url, nil)
 	c.token = "vtok"
 	withGrace(c, time.Now().Add(1*time.Hour))
-	v := c.Revalidate("fp")
+	v := c.Revalidate("fp", "")
 	if v.Status != StatusActive || v.Reason != "grace" {
 		t.Fatalf("network error within grace must ride grace, got %s/%s", v.Status, v.Reason)
 	}
@@ -79,7 +79,7 @@ func TestRevalidate_NetworkErrorPastGraceLocks(t *testing.T) {
 	c := NewOnlineClient(url, nil)
 	c.token = "vtok"
 	withGrace(c, time.Now().Add(-1*time.Hour)) // grace already expired
-	v := c.Revalidate("fp")
+	v := c.Revalidate("fp", "")
 	if v.Unlocked() {
 		t.Fatalf("network error past grace must lock, got %s/%s", v.Status, v.Reason)
 	}
@@ -87,7 +87,7 @@ func TestRevalidate_NetworkErrorPastGraceLocks(t *testing.T) {
 
 func TestRevalidate_NotActivatedLocks(t *testing.T) {
 	c := NewOnlineClient("http://127.0.0.1:1", nil) // never called
-	v := c.Revalidate("fp")
+	v := c.Revalidate("fp", "")
 	if v.Status != StatusLocked || v.Reason != "not_activated" {
 		t.Fatalf("no token must lock not_activated, got %s/%s", v.Status, v.Reason)
 	}
