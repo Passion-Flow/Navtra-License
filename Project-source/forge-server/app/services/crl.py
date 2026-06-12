@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import crypto
 from app.licensing import forge_file
 from app.licensing.keys import KeyManager
-from app.models.license import License
 from app.models.revocation import CrlBundle, Revocation
 from app.services.audit_service import AuditService
 
@@ -40,10 +39,11 @@ class CrlService:
         return bundle.signed_blob if bundle else None
 
     async def generate(self, *, actor_id: str | None, ctx: dict) -> CrlBundle:
-        # all revoked OFFLINE licenses (by public license_id)
+        # all revoked OFFLINE licenses, by denormalized public id — NO License join, so the CRL
+        # keeps listing a revoked license even after its row is hard-deleted (no offline bypass).
         rows = (await self.db.execute(
-            select(License.license_id).join(Revocation, Revocation.license_id == License.id)
-            .where(License.mode == "offline")
+            select(Revocation.license_public_id)
+            .where(Revocation.mode == "offline", Revocation.license_public_id.is_not(None))
         )).scalars().all()
         revoked_ids = sorted(str(x) for x in rows)
 
@@ -57,10 +57,11 @@ class CrlService:
 
         bundle = CrlBundle(version=version, signed_blob=blob, entry_count=len(revoked_ids))
         self.db.add(bundle)
-        # stamp the version onto revocations that are now published
+        # stamp the version onto revocations that are now published (denormalized, no License join)
         for rev in (await self.db.execute(
-            select(Revocation).join(License, Revocation.license_id == License.id)
-            .where(License.mode == "offline", Revocation.crl_version.is_(None))
+            select(Revocation)
+            .where(Revocation.mode == "offline", Revocation.crl_version.is_(None),
+                   Revocation.license_public_id.is_not(None))
         )).scalars().all():
             rev.crl_version = version
         self.audit.log(action="crl.generate", result="success", actor_id=actor_id,

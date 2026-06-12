@@ -121,7 +121,9 @@ class IssuanceService:
         lic.revoked_at = _now()
         lic.revoke_reason = reason
         if not await self.revocations.get_by_license(lic.id):
-            self.db.add(Revocation(license_id=lic.id, reason=reason))
+            # denormalize public id + mode so the CRL survives a later license hard-delete
+            self.db.add(Revocation(license_id=lic.id, reason=reason,
+                                   license_public_id=str(lic.license_id), mode=lic.mode))
         self.audit.log(action="license.revoke", result="success", actor_id=actor_id,
                        resource_type="license", resource_id=str(lic.license_id),
                        reason=reason or None, **ctx)

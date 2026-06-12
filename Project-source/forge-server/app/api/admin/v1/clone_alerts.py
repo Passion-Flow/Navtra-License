@@ -42,7 +42,12 @@ def _alert_out(a: CloneAlert, license_public_id: str | None) -> dict:
 async def list_clone_alerts(status: str | None = None,
                             user: CurrentUser = Depends(require_perm(P.LICENSE_READ)),
                             db: AsyncSession = Depends(get_db_session)) -> dict:
-    q = select(CloneAlert, License.license_id).join(License, License.id == CloneAlert.license_id)
+    # 只显示"仍有效"许可证的告警：许可证一旦被删除(软删)/吊销/过期，克隆隐患即不复存在，
+    # 其历史告警不再展示（避免删了许可证告警还挂着的困惑）。
+    q = (select(CloneAlert, License.license_id)
+         .join(License, License.id == CloneAlert.license_id)
+         .where(License.deleted_at.is_(None),
+                License.status.notin_(("revoked", "expired", "locked"))))
     if status:
         q = q.where(CloneAlert.status == status)
     q = q.order_by(CloneAlert.detected_at.desc()).limit(200)

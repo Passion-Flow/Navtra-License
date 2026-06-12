@@ -88,8 +88,13 @@ async def delete_license(license_id: str, request: Request,
     lic = await repo.get(uuid.UUID(license_id))
     if not lic:
         raise BizError("RESOURCE_NOT_FOUND")
-    await repo.soft_delete(lic, actor_id=uuid.UUID(user.user_id))
+    public_id = str(lic.license_id)
+    # HARD delete (orm-patterns: delete means gone). FK cascades wipe bindings/leases/clone_alerts;
+    # the revocation survives via SET NULL (license_public_id keeps it in the CRL → no offline bypass).
+    # Online clients lock on next validate (lease row cascade-gone → definitive lock). Audit row below
+    # is the permanent record of the deletion.
+    await db.delete(lic)
     AuditService(db).log(action="license.delete", result="success", actor_id=user.user_id,
-                         resource_type="license", resource_id=str(lic.license_id), **audit_ctx(request))
+                         resource_type="license", resource_id=public_id, **audit_ctx(request))
     await db.commit()
     return {"data": {"deleted": True}, "request_id": request.state.request_id}
